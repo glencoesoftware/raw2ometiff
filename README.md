@@ -1,3 +1,5 @@
+[![Build status](https://ci.appveyor.com/api/projects/status/hvqqnbiwmo90m2fd?svg=true)](https://ci.appveyor.com/project/gs-jenkins/raw-to-ome-tiff)
+
 raw-to-ome-tiff converter
 =========================
 
