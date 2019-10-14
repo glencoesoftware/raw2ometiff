@@ -28,7 +28,7 @@ Run the conversion:
 Areas to improve
 ================
 
-* Add label, macro, and metadata annotations to pyramid file
+* Add metadata annotations to pyramid file
 * Add compression option
 * Try faster writing option (TiffSaver instead of PyramidOMETiffWriter)
     - this is little more complicated since the tiles are RGB

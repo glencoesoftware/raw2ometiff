@@ -374,17 +374,34 @@ public class PyramidFromDirectoryWriter {
         File label = getLabelFile();
         File macro = getMacroFile();
 
+        int nextImage = 1;
         if (label != null && label.exists()) {
-          // TODO: add to metadata
+            try {
+                helperReader.setId(label.getAbsolutePath());
+                MetadataTools.populateMetadata(metadata, nextImage,
+                    "Label", helperReader.getCoreMetadataList().get(0));
+                nextImage++;
+            }
+            finally {
+                helperReader.close();
+            }
         }
         if (macro != null && macro.exists()) {
-          // TODO: add to metadata
+            try {
+                helperReader.setId(macro.getAbsolutePath());
+                MetadataTools.populateMetadata(metadata, nextImage,
+                    "Macro", helperReader.getCoreMetadataList().get(0));
+            }
+            finally {
+                helperReader.close();
+            }
         }
 
         // TODO: add metadata file as annotation(s)
 
         writer = new PyramidOMETiffWriter();
         writer.setBigTiff(true);
+        writer.setWriteSequentially(true);
         writer.setMetadataRetrieve(this.metadata);
         writer.setTileSizeX(resolutions[numberOfResolutions - 1].tileSizeX);
         writer.setTileSizeY(resolutions[numberOfResolutions - 1].tileSizeY);
@@ -395,10 +412,9 @@ public class PyramidFromDirectoryWriter {
 
     /**
      * Writes all image data to the initialized TIFF writer
-     * and amends the file type metadata to ensure that the
-     * TIFF will be correctly detected as a pyramid.
      */
     public void convertToPyramid() throws FormatException, IOException {
+        // convert every resolution in the pyramid
         for (int resolution=0; resolution<numberOfResolutions; resolution++) {
             log.info("Converting resolution #{}", resolution);
             writer.setResolution(resolution);
@@ -419,6 +435,36 @@ public class PyramidFromDirectoryWriter {
                 }
             }
         }
+        writer.setResolution(0);
+
+        // add the label image, if present
+        File label = getLabelFile();
+        int nextImage = 1;
+        if (label != null && label.exists()) {
+            writer.setSeries(nextImage);
+            try {
+                helperReader.setId(label.getAbsolutePath());
+                writer.saveBytes(0, helperReader.openBytes(0));
+            }
+            finally {
+                helperReader.close();
+            }
+            nextImage++;
+        }
+
+        // add the macro image, if present
+        File macro = getMacroFile();
+        if (macro != null && macro.exists()) {
+            writer.setSeries(nextImage);
+            try {
+                helperReader.setId(macro.getAbsolutePath());
+                writer.saveBytes(0, helperReader.openBytes(0));
+            }
+            finally {
+                helperReader.close();
+            }
+        }
+
         this.writer.close();
     }
 
