@@ -28,7 +28,6 @@ Run the conversion:
 Areas to improve
 ================
 
-* Calculate subresolution XY dimensions from full resolution dimensions
 * Add label, macro, and metadata annotations to pyramid file
 * Add compression option
 * Try faster writing option (TiffSaver instead of PyramidOMETiffWriter)

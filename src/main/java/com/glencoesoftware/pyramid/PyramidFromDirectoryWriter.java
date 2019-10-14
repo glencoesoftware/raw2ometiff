@@ -219,9 +219,11 @@ public class PyramidFromDirectoryWriter {
      * @param resolution the pyramid level, indexed from 0 (largest)
      * @param x the tile X index, from 0 to numberOfTilesX
      * @param y the tile Y index, from 0 to numberOfTilesY
+     * @param region specifies the width and height to read
      * @return byte array containing the pixels for the tile
      */
-    private byte[] getInputTileBytes(int resolution, int x, int y)
+    private byte[] getInputTileBytes(int resolution,
+        int x, int y, Region region)
         throws FormatException, IOException
     {
         ResolutionDescriptor descriptor = resolutions[resolution];
@@ -230,12 +232,12 @@ public class PyramidFromDirectoryWriter {
             return null;
         }
         if (!new File(path).exists()) {
-          return new byte[descriptor.tileSizeX * descriptor.tileSizeY *
+          return new byte[region.width * region.height *
             FormatTools.getBytesPerPixel(pixelType) * rgbChannels];
         }
         try {
             helperReader.setId(path);
-            return helperReader.openBytes(0);
+            return helperReader.openBytes(0, 0, 0, region.width, region.height);
         }
         finally {
             helperReader.close();
@@ -263,10 +265,16 @@ public class PyramidFromDirectoryWriter {
             int[] tileCount = findNumberOfTiles(resolution);
             descriptor.numberOfTilesX = tileCount[0];
             descriptor.numberOfTilesY = tileCount[1];
-            descriptor.sizeX =
-              descriptor.tileSizeX * descriptor.numberOfTilesX;
-            descriptor.sizeY =
-              descriptor.tileSizeY * descriptor.numberOfTilesY;
+            if (resolution == 0) {
+                descriptor.sizeX =
+                  descriptor.tileSizeX * descriptor.numberOfTilesX;
+                descriptor.sizeY =
+                  descriptor.tileSizeY * descriptor.numberOfTilesY;
+            }
+            else {
+                descriptor.sizeX = resolutions[resolution - 1].sizeX / 2;
+                descriptor.sizeY = resolutions[resolution - 1].sizeY / 2;
+            }
             descriptor.tileFiles =
               new String[descriptor.numberOfTilesX][descriptor.numberOfTilesY];
             findTileFiles(descriptor);
@@ -399,9 +407,14 @@ public class PyramidFromDirectoryWriter {
                 new Region(0, 0, descriptor.tileSizeX, descriptor.tileSizeY);
             for (int y = 0; y < descriptor.numberOfTilesY; y ++) {
                 region.y = y * descriptor.tileSizeY;
+                region.height = (int) Math.min(
+                    descriptor.tileSizeY, descriptor.sizeY - region.y);
                 for (int x = 0; x < descriptor.numberOfTilesX; x++) {
                     region.x = x * descriptor.tileSizeX;
-                    byte[] tileBytes = getInputTileBytes(resolution, x, y);
+                    region.width = (int) Math.min(
+                        descriptor.tileSizeX, descriptor.sizeX - region.x);
+                    byte[] tileBytes =
+                        getInputTileBytes(resolution, x, y, region);
                     writeTile(0, tileBytes, region);
                 }
             }
