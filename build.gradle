@@ -20,6 +20,8 @@ repositories {
 
 dependencies {
     compile ('ome:formats-bsd:6.2.1')
+    // be careful here, this is a newer version of org.json:json than formats-gpl uses
+    compile ('org.json:json:20190722')
 }
 
 applicationDistribution.from("$projectDir") {

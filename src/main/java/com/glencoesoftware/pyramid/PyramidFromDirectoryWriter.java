@@ -12,11 +12,15 @@ import java.io.IOException;
 import java.nio.file.Paths;
 import java.util.Arrays;
 import java.util.Comparator;
+import java.util.Hashtable;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import loci.common.DataTools;
 import loci.common.Region;
+import loci.common.services.DependencyException;
+import loci.common.services.ServiceFactory;
 import loci.formats.ClassList;
 import loci.formats.FormatException;
 import loci.formats.FormatTools;
@@ -29,8 +33,11 @@ import loci.formats.in.MetadataOptions;
 import loci.formats.in.MinimalTiffReader;
 import loci.formats.ome.OMEPyramidStore;
 import loci.formats.out.PyramidOMETiffWriter;
+import loci.formats.services.OMEXMLService;
 
 import ome.xml.model.primitives.PositiveInteger;
+
+import org.json.JSONObject;
 
 /**
  * Writes a pyramid OME-TIFF file using Bio-Formats 6.x.
@@ -397,7 +404,24 @@ public class PyramidFromDirectoryWriter {
             }
         }
 
-        // TODO: add metadata file as annotation(s)
+        File metadataFile = getMetadataFile();
+        if (metadataFile != null && metadataFile.exists()) {
+            String jsonMetadata =
+                DataTools.readFile(metadataFile.getAbsolutePath());
+            JSONObject json = new JSONObject(jsonMetadata);
+
+            Hashtable<String, Object> originalMeta = new Hashtable<String, Object>();
+            parseJSONValues(json, originalMeta, "");
+
+            try {
+                ServiceFactory factory = new ServiceFactory();
+                OMEXMLService service = factory.getInstance(OMEXMLService.class);
+                service.populateOriginalMetadata(metadata, originalMeta);
+            }
+            catch (DependencyException e) {
+                log.warn("Could not attach metadata annotations", e);
+            }
+        }
 
         writer = new PyramidOMETiffWriter();
         writer.setBigTiff(true);
@@ -406,6 +430,24 @@ public class PyramidFromDirectoryWriter {
         writer.setTileSizeX(resolutions[numberOfResolutions - 1].tileSizeX);
         writer.setTileSizeY(resolutions[numberOfResolutions - 1].tileSizeY);
         writer.setId(this.outputFilePath);
+    }
+
+    private void parseJSONValues(JSONObject root,
+        Hashtable<String, Object> originalMeta, String prefix)
+    {
+        for (String key : root.keySet()) {
+            Object value = root.get(key);
+
+            if (value instanceof JSONObject) {
+                parseJSONValues(
+                    (JSONObject) value, originalMeta,
+                    prefix.isEmpty() ? key : prefix + " | " + key);
+            }
+            else {
+                originalMeta.put(prefix.isEmpty() ? key : prefix + " | " + key,
+                    value.toString());
+            }
+        }
     }
 
      //* Conversion */
