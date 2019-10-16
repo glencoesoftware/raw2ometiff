@@ -19,6 +19,7 @@ repositories {
 }
 
 dependencies {
+    compile ('info.picocli:picocli:3.9.3')
     compile ('ome:formats-bsd:6.2.1')
     // be careful here, this is a newer version of org.json:json than formats-gpl uses
     compile ('org.json:json:20190722')

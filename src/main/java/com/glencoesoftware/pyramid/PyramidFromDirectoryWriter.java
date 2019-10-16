@@ -13,11 +13,13 @@ import java.nio.file.Paths;
 import java.util.Arrays;
 import java.util.Comparator;
 import java.util.Hashtable;
+import java.util.concurrent.Callable;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import loci.common.DataTools;
+import loci.common.DebugTools;
 import loci.common.Region;
 import loci.common.services.DependencyException;
 import loci.common.services.ServiceFactory;
@@ -39,6 +41,10 @@ import ome.xml.model.primitives.PositiveInteger;
 
 import org.json.JSONObject;
 
+import picocli.CommandLine;
+import picocli.CommandLine.Option;
+import picocli.CommandLine.Parameters;
+
 /**
  * Writes a pyramid OME-TIFF file using Bio-Formats 6.x.
  * Image tiles are read from files within a specific folder structure:
@@ -57,7 +63,7 @@ import org.json.JSONObject;
  * must have at least one valid tile file.
  * Any missing tiles are filled in with pixel values of 0 (black).
  */
-public class PyramidFromDirectoryWriter {
+public class PyramidFromDirectoryWriter implements Callable<Void> {
 
     /** Name of label image file */
     private static final String LABEL_FILE = "LABELIMAGE.jpg";
@@ -76,10 +82,27 @@ public class PyramidFromDirectoryWriter {
     PyramidOMETiffWriter writer;
 
     /** Where to write? */
+    @Option(
+        names = "--output",
+        arity = "1",
+        required = true,
+        description = "Relative path to the output OME-TIFF file"
+    )
     String outputFilePath;
 
-    /** Where to write? */
+    /** Where to read? */
+    @Parameters(
+        index = "0",
+        arity = "1",
+        description = "Directory containing pixel data to convert"
+    )
     String inputDirectory;
+
+    @Option(
+        names = "--debug",
+        description = "Turn on debug logging"
+    )
+    boolean debug = false;
 
     /** FormatTools pixel type */
     Integer pixelType;
@@ -129,12 +152,7 @@ public class PyramidFromDirectoryWriter {
     /** Reader used for opening tile files. */
     private IFormatReader helperReader = null;
 
-    public PyramidFromDirectoryWriter(
-        String inputDirectory, String outputFilePath)
-    {
-        this.inputDirectory = inputDirectory;
-        this.outputFilePath = outputFilePath;
-
+    public PyramidFromDirectoryWriter() {
         // specify a minimal list of readers to speed up tile reading
         ClassList<IFormatReader> validReaders =
             new ClassList<IFormatReader>(IFormatReader.class);
@@ -143,11 +161,23 @@ public class PyramidFromDirectoryWriter {
         helperReader = new ImageReader(validReaders);
     }
 
-    public static void main(String[] args) throws FormatException, IOException {
-        PyramidFromDirectoryWriter writer =
-            new PyramidFromDirectoryWriter(args[0], args[1]);
-        writer.initialize();
-        writer.convertToPyramid();
+    public static void main(String[] args) {
+        CommandLine.call(new PyramidFromDirectoryWriter(), args);
+    }
+
+    @Override
+    public Void call() {
+        if (!debug) {
+            DebugTools.setRootLevel("INFO");
+        }
+        try {
+            initialize();
+            convertToPyramid();
+        }
+        catch (FormatException|IOException e) {
+            throw new RuntimeException(e);
+        }
+        return null;
     }
 
     //* Initialization */

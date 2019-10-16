@@ -22,13 +22,12 @@ Unpack the distribution:
 
 Run the conversion:
 
-    bin/raw-to-ome-tiff tile_directory pyramid.ome.tiff
+    bin/raw-to-ome-tiff tile_directory --output pyramid.ome.tiff
 
 
 Areas to improve
 ================
 
-* Add metadata annotations to pyramid file
 * Add compression option
 * Try faster writing option (TiffSaver instead of PyramidOMETiffWriter)
     - this is little more complicated since the tiles are RGB
