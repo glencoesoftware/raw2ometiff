@@ -104,6 +104,12 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
     )
     boolean debug = false;
 
+    @Option(
+        names = "--compression",
+        description = "Compression type for output OME-TIFF file (default: LZW)"
+    )
+    String compression = "LZW";
+
     /** FormatTools pixel type */
     Integer pixelType;
 
@@ -459,6 +465,9 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
         writer.setMetadataRetrieve(this.metadata);
         writer.setTileSizeX(resolutions[numberOfResolutions - 1].tileSizeX);
         writer.setTileSizeY(resolutions[numberOfResolutions - 1].tileSizeY);
+        if (compression != null) {
+            writer.setCompression(compression);
+        }
         writer.setId(this.outputFilePath);
     }
 
