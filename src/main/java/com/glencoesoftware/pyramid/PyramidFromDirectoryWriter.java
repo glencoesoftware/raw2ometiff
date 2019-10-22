@@ -443,9 +443,43 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
         populateMetadataFromInputFile();
         describePyramid();
         metadata = (OMEPyramidStore) MetadataTools.createOMEXMLMetadata();
+
+        File metadataFile = getMetadataFile();
+        Hashtable<String, Object> originalMeta =
+            new Hashtable<String, Object>();
+        if (metadataFile != null && metadataFile.exists()) {
+            String jsonMetadata =
+                DataTools.readFile(metadataFile.getAbsolutePath());
+            JSONObject json = new JSONObject(jsonMetadata);
+
+            parseJSONValues(json, originalMeta, "");
+
+            try {
+                ServiceFactory factory = new ServiceFactory();
+                OMEXMLService service =
+                    factory.getInstance(OMEXMLService.class);
+                service.populateOriginalMetadata(metadata, originalMeta);
+            }
+            catch (DependencyException e) {
+                log.warn("Could not attach metadata annotations", e);
+            }
+        }
+
         for (ResolutionDescriptor descriptor : resolutions) {
             log.info("Adding metadata for resolution: {}",
                 descriptor.resolutionNumber);
+
+            String levelKey =
+                "Image #0 | Level sizes #" + descriptor.resolutionNumber;
+            String realX = originalMeta.get(levelKey + " | X").toString();
+            String realY = originalMeta.get(levelKey + " | Y").toString();
+            if (realX != null) {
+                descriptor.sizeX = DataTools.parseDouble(realX).intValue();
+            }
+            if (realY != null) {
+                descriptor.sizeY = DataTools.parseDouble(realY).intValue();
+            }
+
             if (descriptor.resolutionNumber == 0) {
                 MetadataTools.populateMetadata(
                     this.metadata, 0, null, this.littleEndian, "XYCZT",
@@ -484,27 +518,6 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
             }
             finally {
                 helperReader.close();
-            }
-        }
-
-        File metadataFile = getMetadataFile();
-        if (metadataFile != null && metadataFile.exists()) {
-            String jsonMetadata =
-                DataTools.readFile(metadataFile.getAbsolutePath());
-            JSONObject json = new JSONObject(jsonMetadata);
-
-            Hashtable<String, Object> originalMeta =
-                new Hashtable<String, Object>();
-            parseJSONValues(json, originalMeta, "");
-
-            try {
-                ServiceFactory factory = new ServiceFactory();
-                OMEXMLService service =
-                    factory.getInstance(OMEXMLService.class);
-                service.populateOriginalMetadata(metadata, originalMeta);
-            }
-            catch (DependencyException e) {
-                log.warn("Could not attach metadata annotations", e);
             }
         }
 
