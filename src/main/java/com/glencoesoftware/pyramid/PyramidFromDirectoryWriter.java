@@ -517,6 +517,7 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
                 helperReader.setId(macro.getAbsolutePath());
                 MetadataTools.populateMetadata(metadata, nextImage,
                     "Macro", helperReader.getCoreMetadataList().get(0));
+                nextImage++;
             }
             finally {
                 helperReader.close();
