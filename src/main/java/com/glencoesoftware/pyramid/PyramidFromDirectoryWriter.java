@@ -49,6 +49,8 @@ import loci.formats.tiff.IFD;
 import ome.xml.model.primitives.PositiveInteger;
 
 import org.json.JSONObject;
+import org.perf4j.StopWatch;
+import org.perf4j.slf4j.Slf4JStopWatch;
 
 import picocli.CommandLine;
 import picocli.CommandLine.Option;
@@ -207,8 +209,20 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
             DebugTools.setRootLevel("INFO");
         }
         try {
-            initialize();
-            convertToPyramid();
+            StopWatch t0 = new Slf4JStopWatch("initialize");
+            try {
+                initialize();
+            }
+            finally {
+                t0.stop();
+            }
+            t0 = new Slf4JStopWatch("convertToPyramid");
+            try {
+                convertToPyramid();
+            }
+            finally {
+                t0.stop();
+            }
         }
         catch (FormatException|IOException e) {
             throw new RuntimeException(e);
@@ -320,11 +334,30 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
             return new byte[xy * bpp * rgbChannels];
         }
         try {
-            helperReader.setId(path);
-            if (region == null) {
-                return helperReader.openBytes(0);
+            StopWatch t0 = new Slf4JStopWatch("getInputTileBytes.setId");
+            try {
+                helperReader.setId(path);
             }
-            return helperReader.openBytes(0, 0, 0, region.width, region.height);
+            finally {
+                t0.stop();
+            }
+            if (region == null) {
+                t0 = new Slf4JStopWatch("getInputTileBytes.openBytes");
+                try {
+                    return helperReader.openBytes(0);
+                }
+                finally {
+                    t0.stop();
+                }
+            }
+            t0 = new Slf4JStopWatch("getInputTileBytes.openBytesWithRegion");
+            try {
+                return helperReader.openBytes(
+                        0, 0, 0, region.width, region.height);
+            }
+            finally {
+                t0.stop();
+            }
         }
         finally {
             helperReader.close();
@@ -596,9 +629,22 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
                         region.x = x * descriptor.tileSizeX;
                         region.width = (int) Math.min(
                             descriptor.tileSizeX, descriptor.sizeX - region.x);
-                        byte[] tileBytes =
-                            getInputTileBytes(resolution, x, y, region);
-                        writeTile(0, tileBytes, region, ifd);
+                        StopWatch t0 = new Slf4JStopWatch("getInputTileBytes");
+                        byte[] tileBytes;
+                        try {
+                            tileBytes =
+                                getInputTileBytes(resolution, x, y, region);
+                        }
+                        finally {
+                            t0.stop();
+                        }
+                        t0 = new Slf4JStopWatch("writeTile");
+                        try {
+                            writeTile(0, tileBytes, region, ifd);
+                        }
+                        finally {
+                            t0.stop();
+                        }
                     }
                 }
             }
