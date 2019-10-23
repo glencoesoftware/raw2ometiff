@@ -36,6 +36,7 @@ import loci.formats.IFormatReader;
 import loci.formats.ImageReader;
 import loci.formats.MetadataTools;
 import loci.formats.in.APNGReader;
+import loci.formats.in.BMPReader;
 import loci.formats.in.DefaultMetadataOptions;
 import loci.formats.in.JPEGReader;
 import loci.formats.in.MetadataOptions;
@@ -193,6 +194,7 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
         // specify a minimal list of readers to speed up tile reading
         ClassList<IFormatReader> validReaders =
             new ClassList<IFormatReader>(IFormatReader.class);
+        validReaders.addClass(BMPReader.class);
         validReaders.addClass(MinimalTiffReader.class);
         validReaders.addClass(JPEGReader.class);
         validReaders.addClass(APNGReader.class);
