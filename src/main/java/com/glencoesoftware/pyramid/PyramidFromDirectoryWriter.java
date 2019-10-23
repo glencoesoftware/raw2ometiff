@@ -20,6 +20,8 @@ import java.util.concurrent.Callable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import com.google.common.io.Files;
+
 import loci.common.DataTools;
 import loci.common.DebugTools;
 import loci.common.Region;
@@ -675,7 +677,7 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
      */
     private void sortFiles(String[] list) {
       Arrays.sort(list, Comparator.comparingInt(
-        v -> Integer.parseInt(v.replaceAll(".tiff", ""))));
+        v -> Integer.parseInt(Files.getNameWithoutExtension(v))));
     }
 
 }
