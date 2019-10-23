@@ -42,6 +42,7 @@ import loci.formats.in.MetadataOptions;
 import loci.formats.in.MinimalTiffReader;
 import loci.formats.ome.OMEPyramidStore;
 import loci.formats.out.PyramidOMETiffWriter;
+import loci.formats.out.TiffWriter;
 import loci.formats.services.OMEXMLService;
 import loci.formats.tiff.IFD;
 
@@ -72,6 +73,20 @@ import picocli.CommandLine.Parameters;
  * Any missing tiles are filled in with pixel values of 0 (black).
  */
 public class PyramidFromDirectoryWriter implements Callable<Void> {
+
+    static class CompressionTypes extends ArrayList<String> {
+        CompressionTypes() {
+            super(CompressionTypes.getCompressionTypes());
+        }
+
+        private static List<String> getCompressionTypes() {
+            try (TiffWriter v = new TiffWriter()) {
+                return Arrays.asList(v.getCompressionTypes());
+            } catch (Exception e) {
+                return new ArrayList<String>();
+            }
+        }
+    }
 
     /** Name of label image file */
     private static final String LABEL_FILE = "LABELIMAGE.jpg";
@@ -114,7 +129,9 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
 
     @Option(
         names = "--compression",
-        description = "Compression type for output OME-TIFF file (default: LZW)"
+        completionCandidates = CompressionTypes.class,
+        description = "Compression type for output OME-TIFF file " +
+                      "(${COMPLETION-CANDIDATES}; default: ${DEFAULT-VALUE})"
     )
     String compression = "LZW";
 
