@@ -49,6 +49,8 @@ import loci.formats.FormatException;
 import loci.formats.FormatTools;
 import loci.formats.codec.CodecOptions;
 
+import org.perf4j.StopWatch;
+import org.perf4j.slf4j.Slf4JStopWatch;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -335,6 +337,8 @@ public class TiffSaver {
 
       // write pixel strips to output buffers
       // Check for the sane cases
+      StopWatch t0 = new Slf4JStopWatch("writePixelStripsToOutputBuffers");
+      try {
       if (channelsAllSameSize
           && (ifd.getImageWidth() == w && ifd.getTileWidth() == w)
               || (tileHeight * tileWidth * nChannels * bytesPerPixel == buf.length)) {
@@ -406,13 +410,18 @@ public class TiffSaver {
           }
         }
       }
+      } finally {
+        t0.stop();
+      }
     }
 
     // Compress strips according to given differencing and compression schemes,
     // this operation is NOT synchronized and is the ONLY portion of the
     // TiffWriter.saveBytes() --> TiffSaver.writeImage() stack that is NOT
     // synchronized.
+    StopWatch t0 = new Slf4JStopWatch("compressStrips");
     byte[][] strips = new byte[nStrips][];
+    try {
     for (int strip=0; strip<nStrips; strip++) {
       strips[strip] = stripBuf[strip].toByteArray();
       TiffCompression.difference(strips[strip], ifd);
@@ -428,10 +437,18 @@ public class TiffSaver {
             strip + 1, nStrips, strips[strip].length));
       }
     }
+    } finally {
+        t0.stop();
+    }
 
     // This operation is synchronized
     synchronized (this) {
+      t0 = new Slf4JStopWatch("writeImageIFD");
+      try {
       writeImageIFD(ifd, no, strips, nChannels, last, x ,y);
+      } finally {
+          t0.stop();
+      }
     }
   }
 
@@ -491,7 +508,12 @@ public class TiffSaver {
       else if (isTiled) {
         defaultByteCount = strips[0].length;
       }
+      StopWatch t0 = new Slf4JStopWatch("writeIFDStrips");
+      try {
       writeIFDStrips(ifd, no, strips, nChannels, last, x, y, defaultByteCount);
+      } finally {
+        t0.stop();
+      }
     }
     finally {
       if (in != null) {
@@ -521,6 +543,8 @@ public class TiffSaver {
     ByteArrayHandle extra = new ByteArrayHandle();
     RandomAccessOutputStream extraStream = new RandomAccessOutputStream(extra);
 
+    StopWatch t0 = new Slf4JStopWatch("writeIFD.writeIFDValues");
+    try {
     for (Integer key : keys) {
       if (key.equals(IFD.LITTLE_ENDIAN) || key.equals(IFD.BIG_TIFF) ||
           key.equals(IFD.REUSE)) continue;
@@ -528,10 +552,18 @@ public class TiffSaver {
       Object value = ifd.get(key);
       writeIFDValue(extraStream, ifdBytes + fp, key.intValue(), value);
     }
+    } finally {
+      t0.stop();
+    }
+    t0 = new Slf4JStopWatch("writeIFD.seekAndWriteOut");
+    try {
     if (bigTiff) out.seek(out.getFilePointer());
     writeIntValue(out, nextOffset);
     out.write(extra.getBytes(), 0, (int) extra.length());
     extraStream.close();
+    } finally {
+      t0.stop();
+    }
   }
 
   /**
@@ -1021,7 +1053,12 @@ public class TiffSaver {
       fp = sequentialTileFilePointer;
     }
     if (fp == out.getFilePointer()) { // Create IFD only if at the end of file
+      StopWatch t0 = new Slf4JStopWatch("writeIFDIfAtEndOfFile");
+      try {
       writeIFD(ifd, 0);
+      } finally {
+        t0.stop();
+      }
     }
 
     // strips.length is the total number of strips being written during
@@ -1093,7 +1130,12 @@ public class TiffSaver {
       LOGGER.debug("Writing tile/strip byte counts: {}",
           Arrays.toString(toPrimitiveArray(byteCounts)));
     }
+    StopWatch t0 = new Slf4JStopWatch("writeIFD");
+    try {
     writeIFD(ifd, last ? 0 : endFP);
+    } finally {
+      t0.stop();
+    }
     if (LOGGER.isDebugEnabled()) {
       LOGGER.debug("Offset after IFD write: {}", out.getFilePointer());
     }
