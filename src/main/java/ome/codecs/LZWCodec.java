@@ -111,8 +111,6 @@ public class LZWCodec extends BaseCodec {
     return result;
   }
 
-  /* @see Codec#compress(ByteBuffer, byte[], CodecOptions) */
-  @Override
   public ByteBuffer compress(ByteBuffer output, byte[] input, CodecOptions options)
     throws CodecException
   {
