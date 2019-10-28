@@ -34,6 +34,7 @@ package ome.codecs;
 
 import java.io.EOFException;
 import java.io.IOException;
+import java.nio.ByteBuffer;
 import java.util.Arrays;
 
 import loci.common.RandomAccessInputStream;
@@ -85,16 +86,12 @@ public class LZWCodec extends BaseCodec {
    */
   private static final int HASH_SIZE = 7349;
 
-  /** Rehashing step. HASH_SIZE and HASH_STEP shoulg be coprime. */
+  /** Rehashing step. HASH_SIZE and HASH_STEP should be coprime. */
   private static final int HASH_STEP = 257;
 
   private static final int CLEAR_CODE = 256;
   private static final int EOI_CODE = 257;
   private static final int FIRST_CODE = 258;
-
-  /** Masks for writing bits in compressor. */
-  private static final int[] COMPR_MASKS =
-    {0xff, 0x7f, 0x3f, 0x1f, 0x0f, 0x07, 0x03, 0x01};
 
   /** Masks for reading bits in decompressor. */
   private static final int[] DECOMPR_MASKS =
@@ -107,22 +104,44 @@ public class LZWCodec extends BaseCodec {
   {
     if (input == null || input.length == 0) return input;
 
+    ByteBuffer output = compress(null, input, options);
+    byte[] result = new byte[output.position()];
+    output.flip();
+    output.get(result);
+    return result;
+  }
+
+  /* @see Codec#compress(ByteBuffer, byte[], CodecOptions) */
+  @Override
+  public ByteBuffer compress(ByteBuffer output, byte[] input, CodecOptions options)
+    throws CodecException
+  {
+    if (input == null || input.length == 0) return ByteBuffer.allocate(0);
+
     // Output buffer (see class comments for justification of size).
     long bufferSize = ((long) input.length * 141) / 100 + 3;
     if (bufferSize > Integer.MAX_VALUE) {
       throw new CodecException("Output buffer is greater than 2 GB");
     }
-    byte[] output = new byte[(int) bufferSize];
-
-    // Current size of output buffer (and position to write next byte).
+    byte[] outArray = null;
+    // Current position to write next byte.
     int outSize = 0;
+    if (output == null || output.remaining() < bufferSize || !output.hasArray()) {
+      outArray = new byte[(int) bufferSize];
+      output = ByteBuffer.wrap(outArray);
+    } else {
+      outArray = output.array();
+      outSize = output.position() + output.arrayOffset();
+    }
+
     // The output always starts with CLEAR code
-    output[outSize++] = (byte) (CLEAR_CODE >> 1);
+    outArray[outSize++] = (byte) (CLEAR_CODE >> 1);
     // Last incomplete byte to be written to output (bits shifted to the right).
-    // Always contains at least 1 bit, and may contain 8 bits.
-    int currOutByte = CLEAR_CODE & 0x01;
-    // Number of unused bits in currOutByte (from 0 to 7).
-    int freeBits = 7;
+    // There is no point in masking off the already written bits;
+    // they'll just eventually get shifted off the top end of the int.
+    int currOutByte = CLEAR_CODE;
+    // Number of used bits in currOutByte (from 0 to 7).
+    int usedBits = 1;
 
     // Hash table.
     // Keys in the table are pairs (code,byte) and values are codes.
@@ -140,44 +159,44 @@ public class LZWCodec extends BaseCodec {
 
     // Names of these variables are taken from TIFF specification.
     // The first byte of input is handled specially.
-    int tiffK = input[0] & 0xff;
-    int tiffOmega = tiffK;
+    int tiffOmega = input[0] & 0xff;
 
     // Main loop.
+  reading:
     for (int currInPos=1; currInPos<input.length; currInPos++) {
-      tiffK = input[currInPos] & 0xff;
+      int tiffK = input[currInPos] & 0xff;
       int hashKey = (tiffOmega << 8) | tiffK;
-      int hashCode = hashKey % HASH_SIZE;
-      do {
+      int hashCode = (hashKey * HASH_STEP) % HASH_SIZE;
+
+      // This loop is guaranteed to terminate because the hash table is larger
+      // than the maximum number of codes before a clear.
+      while (htKeys[hashCode] >= 0) {
         if (htKeys[hashCode] == hashKey) {
           // Omega+K in the table
           tiffOmega = htValues[hashCode];
-          break;
+          continue reading;
         }
-        else if (htKeys[hashCode] < 0) {
-          // Omega+K not in the table
-          // 1) add new entry to hash table
-          htKeys[hashCode] = hashKey;
-          htValues[hashCode] = nextCode++;
-          // 2) output last code
-          int shift = currCodeLength - freeBits;
-          output[outSize++] =
-            (byte) ((currOutByte << freeBits) | (tiffOmega >> shift));
-          if (shift > 8) {
-            output[outSize++] = (byte) (tiffOmega >> (shift - 8));
-            shift -= 8;
-          }
-          freeBits = 8 - shift;
-          currOutByte = tiffOmega & COMPR_MASKS[freeBits];
-          // 3) omega = K
-          tiffOmega = tiffK;
-          break;
-        }
-        else {
-          // we have to rehash
-          hashCode = (hashCode + HASH_STEP) % HASH_SIZE;
-        };
-      } while (true);
+        // Sequential rehashing is just as good as a coprime step
+        // (assuming that the initial hash is reasonably evenly distributed)
+        // and it improves locality of reference.
+        hashCode++;
+        if (hashCode == HASH_SIZE) hashCode = 0;
+      }
+
+      // Omega+K not in the table
+      // 1) add new entry to hash table
+      htKeys[hashCode] = hashKey;
+      htValues[hashCode] = nextCode++;
+      // 2) output last code
+      currOutByte = (currOutByte << currCodeLength) | tiffOmega;
+      usedBits += currCodeLength - 8;
+      outArray[outSize++] = (byte)(currOutByte >> usedBits);
+      if (usedBits >= 8) {
+        usedBits -= 8;
+        outArray[outSize++] = (byte)(currOutByte >> usedBits);
+      }
+      // 3) omega = K
+      tiffOmega = tiffK;
 
       switch (nextCode) {
         case 512:
@@ -190,34 +209,30 @@ public class LZWCodec extends BaseCodec {
           currCodeLength = 12;
           break;
         case 4096:  // write CLEAR code and reinitialize hash table
-         int shift = currCodeLength - freeBits;
-         output[outSize++] =
-           (byte) ((currOutByte << freeBits) | (CLEAR_CODE >> shift));
-         if (shift > 8) {
-           output[outSize++] = (byte) (CLEAR_CODE >> (shift - 8));
-           shift -= 8;
-         }
-         freeBits = 8 - shift;
-         currOutByte = CLEAR_CODE & COMPR_MASKS[freeBits];
-         Arrays.fill(htKeys, -1);
-         nextCode = FIRST_CODE;
-         currCodeLength = 9;
-         break;
+          currOutByte = (currOutByte << currCodeLength) | CLEAR_CODE;
+          usedBits += currCodeLength - 8;
+          outArray[outSize++] = (byte)(currOutByte >> usedBits);
+          if (usedBits >= 8) {
+            usedBits -= 8;
+            outArray[outSize++] = (byte)(currOutByte >> usedBits);
+          }
+          Arrays.fill(htKeys, -1);
+          nextCode = FIRST_CODE;
+          currCodeLength = 9;
+          break;
       }
     }
 
     // End of input:
     // 1) write code from tiff_Omega
     {
-      int shift = currCodeLength - freeBits;
-      output[outSize++] =
-        (byte) ((currOutByte << freeBits) | (tiffOmega >> shift));
-      if (shift > 8) {
-        output[outSize++] = (byte) (tiffOmega >> (shift - 8));
-        shift -= 8;
+      currOutByte = (currOutByte << currCodeLength) | tiffOmega;
+      usedBits += currCodeLength - 8;
+      outArray[outSize++] = (byte)(currOutByte >> usedBits);
+      if (usedBits >= 8) {
+        usedBits -= 8;
+        outArray[outSize++] = (byte)(currOutByte >> usedBits);
       }
-      freeBits = 8 - shift;
-      currOutByte = tiffOmega & COMPR_MASKS[freeBits];
     }
     // 2) write END_OF_INFORMATION code
     //    -- we write the last incomplete byte here as well
@@ -235,21 +250,21 @@ public class LZWCodec extends BaseCodec {
     }
 
     {
-      int shift = currCodeLength - freeBits;
-      output[outSize++] =
-        (byte) ((currOutByte << freeBits) | (EOI_CODE >> shift));
-      if (shift > 8) {
-        output[outSize++] = (byte) (EOI_CODE >> (shift - 8));
-        shift -= 8;
+      currOutByte = ((currOutByte << currCodeLength) | EOI_CODE) << 8;
+      usedBits += currCodeLength;
+      outArray[outSize++] = (byte)(currOutByte >> usedBits);
+      if (usedBits >= 8) {
+        usedBits -= 8;
+        outArray[outSize++] = (byte)(currOutByte >> usedBits);
+        if (usedBits >= 8) {
+          usedBits -= 8;
+          outArray[outSize++] = (byte)(currOutByte >> usedBits);
+        }
       }
-      freeBits = 8 - shift;
-      currOutByte = EOI_CODE & COMPR_MASKS[freeBits];
-      output[outSize++] = (byte) (currOutByte << freeBits);
     }
 
-    byte[] result = new byte[outSize];
-    System.arraycopy(output, 0, result, 0, outSize);
-    return result;
+    output.position(outSize - output.arrayOffset());
+    return output;
   }
 
   /**
