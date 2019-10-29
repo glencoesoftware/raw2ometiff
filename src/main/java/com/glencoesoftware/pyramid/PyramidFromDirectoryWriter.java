@@ -92,6 +92,9 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
         }
     }
 
+    /** Scaling factor between two adjacent resolutions */
+    private static final int PYRAMID_SCALE = 2;
+
     /** Name of label image file */
     private static final String LABEL_FILE = "LABELIMAGE.jpg";
 
@@ -407,8 +410,10 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
                   descriptor.tileSizeY * descriptor.numberOfTilesY;
             }
             else {
-                descriptor.sizeX = resolutions.get(resolution - 1).sizeX / 2;
-                descriptor.sizeY = resolutions.get(resolution - 1).sizeY / 2;
+                descriptor.sizeX =
+                    resolutions.get(resolution - 1).sizeX / PYRAMID_SCALE;
+                descriptor.sizeY =
+                    resolutions.get(resolution - 1).sizeY / PYRAMID_SCALE;
             }
             descriptor.tileFiles =
               new String[descriptor.numberOfTilesX][descriptor.numberOfTilesY];
@@ -442,7 +447,7 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
     }
 
     private double getScale(int resolution) {
-        return Math.pow(2, resolution);
+        return Math.pow(PYRAMID_SCALE, resolution);
     }
 
     /**
