@@ -28,6 +28,7 @@ import loci.common.Region;
 import loci.common.image.IImageScaler;
 import loci.common.image.SimpleImageScaler;
 import loci.common.services.DependencyException;
+import loci.common.services.ServiceException;
 import loci.common.services.ServiceFactory;
 import loci.formats.ClassList;
 import loci.formats.FormatException;
@@ -99,6 +100,9 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
 
     /** Name of JSON metadata file */
     private static final String METADATA_FILE = "METADATA.json";
+
+    /** Name of OME-XML metadata file */
+    private static final String OMEXML_FILE = "METADATA.ome.xml";
 
     /** Logger */
     private static final Logger log =
@@ -299,12 +303,21 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
     }
 
     /**
-     * Get the metadata image file, which may or may not exist.
+     * Get the JSON metadata file, which may or may not exist.
      *
-     * @return File representing the expected metadata image file
+     * @return File representing the expected JSON metadata file
      */
     private File getMetadataFile() {
       return Paths.get(this.inputDirectory, METADATA_FILE).toFile();
+    }
+
+    /**
+     * Get the OME-XML metadata file, which may or may not exist.
+     *
+     * @return File representing the expected OME-XML metadata file
+     */
+    private File getOMEXMLFile() {
+      return Paths.get(this.inputDirectory, OMEXML_FILE).toFile();
     }
 
     /**
@@ -496,26 +509,32 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
         log.info("Creating tiled pyramid file {}", this.outputFilePath);
         populateMetadataFromInputFile();
         describePyramid();
-        metadata = (OMEPyramidStore) MetadataTools.createOMEXMLMetadata();
 
-        File metadataFile = getMetadataFile();
+        OMEXMLService service = getService();
         Hashtable<String, Object> originalMeta =
             new Hashtable<String, Object>();
-        if (metadataFile != null && metadataFile.exists()) {
-            String jsonMetadata =
-                DataTools.readFile(metadataFile.getAbsolutePath());
-            JSONObject json = new JSONObject(jsonMetadata);
-
-            parseJSONValues(json, originalMeta, "");
-
-            try {
-                ServiceFactory factory = new ServiceFactory();
-                OMEXMLService service =
-                    factory.getInstance(OMEXMLService.class);
-                service.populateOriginalMetadata(metadata, originalMeta);
+        if (service != null) {
+            File omexml = getOMEXMLFile();
+            String xml = null;
+            if (omexml != null && omexml.exists()) {
+                xml = DataTools.readFile(omexml.getAbsolutePath());
             }
-            catch (DependencyException e) {
-                log.warn("Could not attach metadata annotations", e);
+            try {
+                metadata = (OMEPyramidStore) service.createOMEXMLMetadata(xml);
+            }
+            catch (ServiceException e) {
+                throw new FormatException("Could not parse OME-XML", e);
+            }
+
+            File metadataFile = getMetadataFile();
+            if (metadataFile != null && metadataFile.exists()) {
+                String jsonMetadata =
+                    DataTools.readFile(metadataFile.getAbsolutePath());
+                JSONObject json = new JSONObject(jsonMetadata);
+
+                parseJSONValues(json, originalMeta, "");
+
+                service.populateOriginalMetadata(metadata, originalMeta);
             }
         }
 
@@ -744,6 +763,17 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
     private void sortFiles(String[] list) {
       Arrays.sort(list, Comparator.comparingInt(
         v -> Integer.parseInt(Files.getNameWithoutExtension(v))));
+    }
+
+    private OMEXMLService getService() {
+        try {
+            ServiceFactory factory = new ServiceFactory();
+            return factory.getInstance(OMEXMLService.class);
+        }
+        catch (DependencyException e) {
+            log.warn("Could not create OME-XML service", e);
+        }
+        return null;
     }
 
 }
