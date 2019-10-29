@@ -38,5 +38,9 @@ The compression can be changed using the `--compression` option.
 Areas to improve
 ================
 
-* Try faster writing option (TiffSaver instead of PyramidOMETiffWriter)
-    - this is little more complicated since the tiles are RGB
+* Compress tiles in parallel
+* Compatibility with both iSyntax and .mrxs
+    - support multiple planes (especially non-RGB channels)
+    - test OME-XML metadata file reading on a real dataset
+    - map JSON metadata to OME-XML (magnification etc.)
+    - fix tile sizes used when downsampling
