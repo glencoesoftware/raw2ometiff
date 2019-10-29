@@ -24,6 +24,8 @@ import com.google.common.io.Files;
 
 import loci.common.DataTools;
 import loci.common.DebugTools;
+import loci.common.RandomAccessInputStream;
+import loci.common.RandomAccessOutputStream;
 import loci.common.Region;
 import loci.common.image.IImageScaler;
 import loci.common.image.SimpleImageScaler;
@@ -47,6 +49,7 @@ import loci.formats.out.PyramidOMETiffWriter;
 import loci.formats.out.TiffWriter;
 import loci.formats.services.OMEXMLService;
 import loci.formats.tiff.IFD;
+import loci.formats.tiff.TiffSaver;
 
 import ome.xml.model.primitives.PositiveInteger;
 
@@ -59,7 +62,7 @@ import picocli.CommandLine.Option;
 import picocli.CommandLine.Parameters;
 
 /**
- * Writes a pyramid OME-TIFF file using Bio-Formats 6.x.
+ * Writes a pyramid OME-TIFF file or Bio-Formats 5.9.x "Faas" TIFF file.
  * Image tiles are read from files within a specific folder structure:
  *
  * root_folder/resolution_index/x_coordinate/y_coordinate.tiff
@@ -112,7 +115,7 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
         LoggerFactory.getLogger(PyramidFromDirectoryWriter.class);
 
     /** Image writer */
-    PyramidOMETiffWriter writer;
+    TiffWriter writer;
 
     /** Where to write? */
     @Option(
@@ -144,6 +147,12 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
                       "(${COMPLETION-CANDIDATES}; default: ${DEFAULT-VALUE})"
     )
     String compression = "LZW";
+
+    @Option(
+        names = "--legacy",
+        description = "Write a Bio-Formats 5.9.x pyramid instead of OME-TIFF"
+    )
+    boolean legacy = false;
 
     /** FormatTools pixel type */
     Integer pixelType;
@@ -446,6 +455,11 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
             (dir, name) -> new File(dir, name).isDirectory()).length;
     }
 
+    /**
+     * @param resolution the resolution index
+     * @return total scale factor between the given resolution and the full
+     *         resolution image (resolution 0)
+     */
     private double getScale(int resolution) {
         return Math.pow(PYRAMID_SCALE, resolution);
     }
@@ -566,41 +580,30 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
                     rgbChannels, 1, rgbChannels);
             }
             else {
-                metadata.setResolutionSizeX(new PositiveInteger(
-                    descriptor.sizeX), 0, descriptor.resolutionNumber);
-                metadata.setResolutionSizeY(new PositiveInteger(
-                    descriptor.sizeY), 0, descriptor.resolutionNumber);
+                if (legacy) {
+                    MetadataTools.populateMetadata(this.metadata,
+                        descriptor.resolutionNumber, null, this.littleEndian,
+                        "XYCZT", FormatTools.getPixelTypeString(pixelType),
+                        descriptor.sizeX, descriptor.sizeY,
+                        1, rgbChannels, 1, rgbChannels);
+                }
+                else {
+                    metadata.setResolutionSizeX(new PositiveInteger(
+                        descriptor.sizeX), 0, descriptor.resolutionNumber);
+                    metadata.setResolutionSizeY(new PositiveInteger(
+                        descriptor.sizeY), 0, descriptor.resolutionNumber);
+                }
             }
         }
 
-        File label = getLabelFile();
-        File macro = getMacroFile();
+        attachExtraImageMetadata();
 
-        int nextImage = 1;
-        if (label != null && label.exists()) {
-            try {
-                helperReader.setId(label.getAbsolutePath());
-                MetadataTools.populateMetadata(metadata, nextImage,
-                    "Label", helperReader.getCoreMetadataList().get(0));
-                nextImage++;
-            }
-            finally {
-                helperReader.close();
-            }
+        if (legacy) {
+            writer = new TiffWriter();
         }
-        if (macro != null && macro.exists()) {
-            try {
-                helperReader.setId(macro.getAbsolutePath());
-                MetadataTools.populateMetadata(metadata, nextImage,
-                    "Macro", helperReader.getCoreMetadataList().get(0));
-                nextImage++;
-            }
-            finally {
-                helperReader.close();
-            }
+        else {
+            writer = new PyramidOMETiffWriter();
         }
-
-        writer = new PyramidOMETiffWriter();
         writer.setBigTiff(true);
         writer.setWriteSequentially(true);
         writer.setMetadataRetrieve(this.metadata);
@@ -639,7 +642,12 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
         for (int resolution=0; resolution<numberOfResolutions; resolution++) {
             log.info("Converting resolution #{}", resolution);
             ResolutionDescriptor descriptor = resolutions.get(resolution);
-            writer.setResolution(resolution);
+            if (legacy) {
+                writer.setSeries(resolution);
+            }
+            else {
+                writer.setResolution(resolution);
+            }
             IFD ifd = new IFD();
             if (!generateResolutions || resolution == 0) {
                 // if the resolution has already been calculated,
@@ -712,37 +720,41 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
                 }
             }
         }
-        writer.setResolution(0);
 
-        // add the label image, if present
-        File label = getLabelFile();
-        int nextImage = 1;
-        if (label != null && label.exists()) {
-            writer.setSeries(nextImage);
-            try {
-                helperReader.setId(label.getAbsolutePath());
-                writer.saveBytes(0, helperReader.openBytes(0));
-            }
-            finally {
-                helperReader.close();
-            }
-            nextImage++;
-        }
+        if (!legacy) {
+            writer.setResolution(0);
 
-        // add the macro image, if present
-        File macro = getMacroFile();
-        if (macro != null && macro.exists()) {
-            writer.setSeries(nextImage);
-            try {
-                helperReader.setId(macro.getAbsolutePath());
-                writer.saveBytes(0, helperReader.openBytes(0));
+            // add the label image, if present
+            File label = getLabelFile();
+            int nextImage = 1;
+            if (label != null && label.exists()) {
+                writer.setSeries(nextImage);
+                try {
+                    helperReader.setId(label.getAbsolutePath());
+                    writer.saveBytes(0, helperReader.openBytes(0));
+                }
+                finally {
+                    helperReader.close();
+                }
+                nextImage++;
             }
-            finally {
-                helperReader.close();
+
+            // add the macro image, if present
+            File macro = getMacroFile();
+            if (macro != null && macro.exists()) {
+                writer.setSeries(nextImage);
+                try {
+                    helperReader.setId(macro.getAbsolutePath());
+                    writer.saveBytes(0, helperReader.openBytes(0));
+                }
+                finally {
+                    helperReader.close();
+                }
             }
         }
 
         this.writer.close();
+        setPyramidIdentifier();
     }
 
     /**
@@ -779,6 +791,65 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
             log.warn("Could not create OME-XML service", e);
         }
         return null;
+    }
+
+    /**
+     * Add metadata for label and macro images (if present) to
+     * the current MetadataStore.  This does nothing if 5.9.x ("Faas")
+     * pyramids are being written.
+     */
+    private void attachExtraImageMetadata() throws FormatException, IOException
+    {
+        if (legacy) {
+            // Faas pyramid files can only contain the pyramid,
+            // not any label/macro images
+            return;
+        }
+        File label = getLabelFile();
+        File macro = getMacroFile();
+
+        int nextImage = 1;
+        if (label != null && label.exists()) {
+            try {
+                helperReader.setId(label.getAbsolutePath());
+                MetadataTools.populateMetadata(metadata, nextImage,
+                    "Label", helperReader.getCoreMetadataList().get(0));
+                nextImage++;
+            }
+            finally {
+                helperReader.close();
+            }
+        }
+        if (macro != null && macro.exists()) {
+            try {
+                helperReader.setId(macro.getAbsolutePath());
+                MetadataTools.populateMetadata(metadata, nextImage,
+                    "Macro", helperReader.getCoreMetadataList().get(0));
+                nextImage++;
+            }
+            finally {
+                helperReader.close();
+            }
+        }
+    }
+
+    /**
+     * Update the first IFD so that the file will be detected as a pyramid.
+     * This does nothing when writing 6.x-compatible OME-TIFF pyramids.
+     */
+    private void setPyramidIdentifier() throws FormatException, IOException {
+        if (!legacy) {
+            return;
+        }
+
+        try (RandomAccessInputStream in =
+                new RandomAccessInputStream(outputFilePath);
+            RandomAccessOutputStream out =
+                new RandomAccessOutputStream(outputFilePath))
+        {
+            TiffSaver saver = new TiffSaver(out, outputFilePath);
+            saver.overwriteIFDValue(in, 0, IFD.SOFTWARE, "Faas-raw2ometiff");
+        }
     }
 
 }
