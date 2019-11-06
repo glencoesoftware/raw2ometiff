@@ -28,6 +28,7 @@ dependencies {
     // be careful here, this is a newer version of org.json:json than formats-gpl uses
     compile ('org.json:json:20190722')
     compile ('org.janelia.saalfeldlab:n5-zarr:0.0.2-beta')
+    compile ('org.janelia.saalfeldlab:n5:2.1.2')
 }
 
 applicationDistribution.from("$projectDir") {
