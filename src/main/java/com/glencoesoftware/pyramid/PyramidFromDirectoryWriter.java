@@ -24,10 +24,13 @@ import com.google.common.io.Files;
 
 import loci.common.DataTools;
 import loci.common.DebugTools;
+import loci.common.RandomAccessInputStream;
+import loci.common.RandomAccessOutputStream;
 import loci.common.Region;
 import loci.common.image.IImageScaler;
 import loci.common.image.SimpleImageScaler;
 import loci.common.services.DependencyException;
+import loci.common.services.ServiceException;
 import loci.common.services.ServiceFactory;
 import loci.formats.ClassList;
 import loci.formats.FormatException;
@@ -46,6 +49,7 @@ import loci.formats.out.PyramidOMETiffWriter;
 import loci.formats.out.TiffWriter;
 import loci.formats.services.OMEXMLService;
 import loci.formats.tiff.IFD;
+import loci.formats.tiff.TiffSaver;
 
 import ome.xml.model.primitives.PositiveInteger;
 
@@ -58,10 +62,12 @@ import picocli.CommandLine.Option;
 import picocli.CommandLine.Parameters;
 
 /**
- * Writes a pyramid OME-TIFF file using Bio-Formats 6.x.
+ * Writes a pyramid OME-TIFF file or Bio-Formats 5.9.x "Faas" TIFF file.
  * Image tiles are read from files within a specific folder structure:
  *
  * root_folder/resolution_index/x_coordinate/y_coordinate.tiff
+ *
+ * root_folder/resolution_index/x_coordinate/y_coordinate/c-z-t.tiff
  *
  * The resulting OME-TIFF file can be read using Bio-Formats 6.x,
  * for example with this command:
@@ -91,6 +97,9 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
         }
     }
 
+    /** Scaling factor between two adjacent resolutions */
+    private static final int PYRAMID_SCALE = 2;
+
     /** Name of label image file */
     private static final String LABEL_FILE = "LABELIMAGE.jpg";
 
@@ -100,12 +109,15 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
     /** Name of JSON metadata file */
     private static final String METADATA_FILE = "METADATA.json";
 
+    /** Name of OME-XML metadata file */
+    private static final String OMEXML_FILE = "METADATA.ome.xml";
+
     /** Logger */
     private static final Logger log =
         LoggerFactory.getLogger(PyramidFromDirectoryWriter.class);
 
     /** Image writer */
-    PyramidOMETiffWriter writer;
+    TiffWriter writer;
 
     /** Where to write? */
     @Option(
@@ -138,6 +150,12 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
     )
     String compression = "LZW";
 
+    @Option(
+        names = "--legacy",
+        description = "Write a Bio-Formats 5.9.x pyramid instead of OME-TIFF"
+    )
+    boolean legacy = false;
+
     /** FormatTools pixel type */
     Integer pixelType;
 
@@ -154,6 +172,11 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
     Boolean littleEndian;
 
     Boolean interleaved;
+
+    int planeCount = 1;
+    int z = 1;
+    int c = 1;
+    int t = 1;
 
     /** Store resolution info */
     List<ResolutionDescriptor> resolutions;
@@ -184,7 +207,7 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
         Integer numberOfTilesY;
 
         /** Absolute paths to each tile, indexed by X and Y */
-        String[][] tileFiles;
+        String[][][] tileFiles;
     }
 
     /** Reader used for opening tile files. */
@@ -272,9 +295,16 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
                 File xPath = new File(directory, x[xx]);
                 String[] y = xPath.list();
                 sortFiles(y);
-                for (int yy=0; yy<y.length; yy++) {
-                    descriptor.tileFiles[xx][yy] =
-                        new File(xPath, y[yy]).getAbsolutePath();
+
+                for (int yy=0; yy<descriptor.tileFiles[xx].length; yy++) {
+                  int copy =
+                    (int) Math.min(planeCount, y.length - yy * planeCount);
+                  if (copy > 0 && yy * planeCount < y.length) {
+                    for (int p=0; p<copy; p++) {
+                      descriptor.tileFiles[xx][yy][p] =
+                        new File(xPath, y[yy * planeCount + p]).getAbsolutePath();
+                    }
+                  }
                 }
             }
         }
@@ -299,12 +329,21 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
     }
 
     /**
-     * Get the metadata image file, which may or may not exist.
+     * Get the JSON metadata file, which may or may not exist.
      *
-     * @return File representing the expected metadata image file
+     * @return File representing the expected JSON metadata file
      */
     private File getMetadataFile() {
       return Paths.get(this.inputDirectory, METADATA_FILE).toFile();
+    }
+
+    /**
+     * Get the OME-XML metadata file, which may or may not exist.
+     *
+     * @return File representing the expected OME-XML metadata file
+     */
+    private File getOMEXMLFile() {
+      return Paths.get(this.inputDirectory, OMEXML_FILE).toFile();
     }
 
     /**
@@ -318,7 +357,7 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
      * @return byte array containing the pixels for the tile
      */
     private byte[] getInputTileBytes(int resolution,
-        int x, int y, Region region)
+        int no, int x, int y, Region region)
         throws FormatException, IOException
     {
         ResolutionDescriptor descriptor = resolutions.get(resolution);
@@ -328,7 +367,7 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
         }
         int bpp = FormatTools.getBytesPerPixel(pixelType);
 
-        String path = descriptor.tileFiles[x][y];
+        String path = descriptor.tileFiles[x][y][no];
         if (path == null) {
             return null;
         }
@@ -388,17 +427,27 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
             descriptor.numberOfTilesX = tileCount[0];
             descriptor.numberOfTilesY = tileCount[1];
             if (resolution == 0) {
-                descriptor.sizeX =
-                  descriptor.tileSizeX * descriptor.numberOfTilesX;
-                descriptor.sizeY =
-                  descriptor.tileSizeY * descriptor.numberOfTilesY;
+                if (metadata.getImageCount() > 0) {
+                    descriptor.sizeX =
+                      metadata.getPixelsSizeX(0).getNumberValue().intValue();
+                    descriptor.sizeY =
+                      metadata.getPixelsSizeY(0).getNumberValue().intValue();
+                }
+                else {
+                    descriptor.sizeX =
+                      descriptor.tileSizeX * descriptor.numberOfTilesX;
+                    descriptor.sizeY =
+                      descriptor.tileSizeY * descriptor.numberOfTilesY;
+                }
             }
             else {
-                descriptor.sizeX = resolutions.get(resolution - 1).sizeX / 2;
-                descriptor.sizeY = resolutions.get(resolution - 1).sizeY / 2;
+                descriptor.sizeX =
+                    resolutions.get(resolution - 1).sizeX / PYRAMID_SCALE;
+                descriptor.sizeY =
+                    resolutions.get(resolution - 1).sizeY / PYRAMID_SCALE;
             }
             descriptor.tileFiles =
-              new String[descriptor.numberOfTilesX][descriptor.numberOfTilesY];
+              new String[descriptor.numberOfTilesX][descriptor.numberOfTilesY][planeCount];
             findTileFiles(descriptor);
             log.info("Resolution: {}; Size: [{}, {}]; " +
                       "Grid size: [{}, {}]",
@@ -428,8 +477,13 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
             (dir, name) -> new File(dir, name).isDirectory()).length;
     }
 
+    /**
+     * @param resolution the resolution index
+     * @return total scale factor between the given resolution and the full
+     *         resolution image (resolution 0)
+     */
     private double getScale(int resolution) {
-        return Math.pow(2, resolution);
+        return Math.pow(PYRAMID_SCALE, resolution);
     }
 
     /**
@@ -462,7 +516,7 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
         int tilesX = xDirectories.length;
         String[] yDirectories =
           new File(resolutionDirectory, xDirectories[0]).list();
-        int tilesY = yDirectories.length;
+        int tilesY = yDirectories.length / planeCount;
         return new int[] {tilesX, tilesY};
     }
 
@@ -495,29 +549,41 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
     public void initialize() throws FormatException, IOException {
         log.info("Creating tiled pyramid file {}", this.outputFilePath);
         populateMetadataFromInputFile();
-        describePyramid();
-        metadata = (OMEPyramidStore) MetadataTools.createOMEXMLMetadata();
 
-        File metadataFile = getMetadataFile();
+        OMEXMLService service = getService();
         Hashtable<String, Object> originalMeta =
             new Hashtable<String, Object>();
-        if (metadataFile != null && metadataFile.exists()) {
-            String jsonMetadata =
-                DataTools.readFile(metadataFile.getAbsolutePath());
-            JSONObject json = new JSONObject(jsonMetadata);
-
-            parseJSONValues(json, originalMeta, "");
-
+        if (service != null) {
+            File omexml = getOMEXMLFile();
+            String xml = null;
+            if (omexml != null && omexml.exists()) {
+                xml = DataTools.readFile(omexml.getAbsolutePath());
+            }
             try {
-                ServiceFactory factory = new ServiceFactory();
-                OMEXMLService service =
-                    factory.getInstance(OMEXMLService.class);
+                metadata = (OMEPyramidStore) service.createOMEXMLMetadata(xml);
+
+                z = metadata.getPixelsSizeZ(0).getNumberValue().intValue();
+                c = metadata.getPixelsSizeC(0).getNumberValue().intValue();
+                t = metadata.getPixelsSizeT(0).getNumberValue().intValue();
+                planeCount = (z * c * t) / rgbChannels;
+            }
+            catch (ServiceException e) {
+                throw new FormatException("Could not parse OME-XML", e);
+            }
+
+            File metadataFile = getMetadataFile();
+            if (metadataFile != null && metadataFile.exists()) {
+                String jsonMetadata =
+                    DataTools.readFile(metadataFile.getAbsolutePath());
+                JSONObject json = new JSONObject(jsonMetadata);
+
+                parseJSONValues(json, originalMeta, "");
+
                 service.populateOriginalMetadata(metadata, originalMeta);
             }
-            catch (DependencyException e) {
-                log.warn("Could not attach metadata annotations", e);
-            }
         }
+
+        describePyramid();
 
         for (ResolutionDescriptor descriptor : resolutions) {
             log.info("Adding metadata for resolution: {}",
@@ -525,58 +591,47 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
 
             String levelKey =
                 "Image #0 | Level sizes #" + descriptor.resolutionNumber;
-            String realX = originalMeta.get(levelKey + " | X").toString();
-            String realY = originalMeta.get(levelKey + " | Y").toString();
+            Object realX = originalMeta.get(levelKey + " | X");
+            Object realY = originalMeta.get(levelKey + " | Y");
             if (realX != null) {
-                descriptor.sizeX = DataTools.parseDouble(realX).intValue();
+                descriptor.sizeX = DataTools.parseDouble(realX.toString()).intValue();
             }
             if (realY != null) {
-                descriptor.sizeY = DataTools.parseDouble(realY).intValue();
+                descriptor.sizeY = DataTools.parseDouble(realY.toString()).intValue();
             }
 
             if (descriptor.resolutionNumber == 0) {
                 MetadataTools.populateMetadata(
                     this.metadata, 0, null, this.littleEndian, "XYCZT",
                     FormatTools.getPixelTypeString(this.pixelType),
-                    descriptor.sizeX, descriptor.sizeY, 1,
-                    rgbChannels, 1, rgbChannels);
+                    descriptor.sizeX, descriptor.sizeY, z,
+                    rgbChannels * c, t, rgbChannels);
             }
             else {
-                metadata.setResolutionSizeX(new PositiveInteger(
-                    descriptor.sizeX), 0, descriptor.resolutionNumber);
-                metadata.setResolutionSizeY(new PositiveInteger(
-                    descriptor.sizeY), 0, descriptor.resolutionNumber);
+                if (legacy) {
+                    MetadataTools.populateMetadata(this.metadata,
+                        descriptor.resolutionNumber, null, this.littleEndian,
+                        "XYCZT", FormatTools.getPixelTypeString(pixelType),
+                        descriptor.sizeX, descriptor.sizeY,
+                        z, rgbChannels * c, t, rgbChannels);
+                }
+                else {
+                    metadata.setResolutionSizeX(new PositiveInteger(
+                        descriptor.sizeX), 0, descriptor.resolutionNumber);
+                    metadata.setResolutionSizeY(new PositiveInteger(
+                        descriptor.sizeY), 0, descriptor.resolutionNumber);
+                }
             }
         }
 
-        File label = getLabelFile();
-        File macro = getMacroFile();
+        attachExtraImageMetadata();
 
-        int nextImage = 1;
-        if (label != null && label.exists()) {
-            try {
-                helperReader.setId(label.getAbsolutePath());
-                MetadataTools.populateMetadata(metadata, nextImage,
-                    "Label", helperReader.getCoreMetadataList().get(0));
-                nextImage++;
-            }
-            finally {
-                helperReader.close();
-            }
+        if (legacy) {
+            writer = new TiffWriter();
         }
-        if (macro != null && macro.exists()) {
-            try {
-                helperReader.setId(macro.getAbsolutePath());
-                MetadataTools.populateMetadata(metadata, nextImage,
-                    "Macro", helperReader.getCoreMetadataList().get(0));
-                nextImage++;
-            }
-            finally {
-                helperReader.close();
-            }
+        else {
+            writer = new PyramidOMETiffWriter();
         }
-
-        writer = new PyramidOMETiffWriter();
         writer.setBigTiff(true);
         writer.setWriteSequentially(true);
         writer.setMetadataRetrieve(this.metadata);
@@ -615,110 +670,123 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
         for (int resolution=0; resolution<numberOfResolutions; resolution++) {
             log.info("Converting resolution #{}", resolution);
             ResolutionDescriptor descriptor = resolutions.get(resolution);
-            writer.setResolution(resolution);
-            IFD ifd = new IFD();
-            if (!generateResolutions || resolution == 0) {
-                // if the resolution has already been calculated,
-                // just read each tile from disk and store in the OME-TIFF
-                ifd.put(IFD.TILE_WIDTH, descriptor.tileSizeX);
-                ifd.put(IFD.TILE_LENGTH, descriptor.tileSizeY);
-                Region region = new Region(0, 0, 0, 0);
-                for (int y = 0; y < descriptor.numberOfTilesY; y ++) {
-                    region.y = y * descriptor.tileSizeY;
-                    region.height = (int) Math.min(
-                        descriptor.tileSizeY, descriptor.sizeY - region.y);
-                    for (int x = 0; x < descriptor.numberOfTilesX; x++) {
-                        region.x = x * descriptor.tileSizeX;
-                        region.width = (int) Math.min(
-                            descriptor.tileSizeX, descriptor.sizeX - region.x);
-                        StopWatch t0 = new Slf4JStopWatch("getInputTileBytes");
-                        byte[] tileBytes;
-                        try {
-                            tileBytes =
-                                getInputTileBytes(resolution, x, y, region);
-                        }
-                        finally {
-                            t0.stop();
-                        }
-                        t0 = new Slf4JStopWatch("writeTile");
-                        try {
-                            writeTile(0, tileBytes, region, ifd);
-                        }
-                        finally {
-                            t0.stop();
-                        }
-                    }
-                }
+            if (legacy) {
+                writer.setSeries(resolution);
             }
             else {
-                // if the resolution needs to be calculated,
-                // read one full resolution at a time and downsample before
-                // storing in the OME-TIFF
-                // this means that tiles in the OME-TIFF will be progressively
-                // smaller, e.g. 512x512 at full resolution will become
-                // 16x16 at resolution 5
-                // this is much simpler than trying to repack multiple
-                // downsampled tiles into the same size tile for all resolutions
-                IImageScaler scaler = new SimpleImageScaler();
-                ResolutionDescriptor zero = resolutions.get(0);
-                int scale = (int) getScale(resolution);
-                ifd.put(IFD.TILE_WIDTH, descriptor.tileSizeX / scale);
-                ifd.put(IFD.TILE_LENGTH, descriptor.tileSizeY / scale);
+                writer.setResolution(resolution);
+            }
+            for (int plane=0; plane<planeCount; plane++) {
+                IFD ifd = new IFD();
+                if (!generateResolutions || resolution == 0) {
+                    // if the resolution has already been calculated,
+                    // just read each tile from disk and store in the OME-TIFF
+                    ifd.put(IFD.TILE_WIDTH, descriptor.tileSizeX);
+                    ifd.put(IFD.TILE_LENGTH, descriptor.tileSizeY);
+                    Region region = new Region(0, 0, 0, 0);
+                    for (int y = 0; y < descriptor.numberOfTilesY; y ++) {
+                        region.y = y * descriptor.tileSizeY;
+                        region.height = (int) Math.min(
+                            descriptor.tileSizeY, descriptor.sizeY - region.y);
+                        for (int x = 0; x < descriptor.numberOfTilesX; x++) {
+                            region.x = x * descriptor.tileSizeX;
+                            region.width = (int) Math.min(
+                                descriptor.tileSizeX, descriptor.sizeX - region.x);
+                            StopWatch t0 = new Slf4JStopWatch("getInputTileBytes");
+                            byte[] tileBytes;
+                            try {
+                                tileBytes =
+                                    getInputTileBytes(resolution, plane, x, y, region);
+                            }
+                            finally {
+                                t0.stop();
+                            }
+                            t0 = new Slf4JStopWatch("writeTile");
+                            try {
+                                if (tileBytes != null) {
+                                    writeTile(plane, tileBytes, region, ifd);
+                                }
+                            }
+                            finally {
+                                t0.stop();
+                            }
+                        }
+                    }
+                }
+                else {
+                    // if the resolution needs to be calculated,
+                    // read one full resolution at a time and downsample before
+                    // storing in the OME-TIFF
+                    // this means that tiles in the OME-TIFF will be progressively
+                    // smaller, e.g. 512x512 at full resolution will become
+                    // 16x16 at resolution 5
+                    // this is much simpler than trying to repack multiple
+                    // downsampled tiles into the same size tile for all resolutions
+                    IImageScaler scaler = new SimpleImageScaler();
+                    ResolutionDescriptor zero = resolutions.get(0);
+                    int scale = (int) getScale(resolution);
+                    ifd.put(IFD.TILE_WIDTH, descriptor.tileSizeX / scale);
+                    ifd.put(IFD.TILE_LENGTH, descriptor.tileSizeY / scale);
 
-                int bpp = FormatTools.getBytesPerPixel(pixelType);
-                Region region = new Region();
-                int thisTileWidth = zero.tileSizeX / scale;
-                int thisTileHeight = zero.tileSizeY / scale;
-                for (int y=0; y<zero.numberOfTilesY; y++) {
-                    region.y = y * thisTileHeight;
-                    region.height = (int) Math.min(
-                        thisTileHeight, descriptor.sizeY - region.y);
-                    for (int x=0; x<zero.numberOfTilesX; x++) {
-                        region.x = x * thisTileWidth;
-                        region.width = (int) Math.min(
-                            thisTileWidth, descriptor.sizeX - region.x);
-                        byte[] fullTile = getInputTileBytes(0, x, y, null);
-                        byte[] downsampled = scaler.downsample(fullTile,
-                            zero.tileSizeX, zero.tileSizeY,
-                            scale, bpp, littleEndian,
-                            FormatTools.isFloatingPoint(pixelType),
-                            rgbChannels, interleaved);
-                        writeTile(0, downsampled, region, ifd);
+                    int bpp = FormatTools.getBytesPerPixel(pixelType);
+                    Region region = new Region();
+                    int thisTileWidth = zero.tileSizeX / scale;
+                    int thisTileHeight = zero.tileSizeY / scale;
+                    for (int y=0; y<zero.numberOfTilesY; y++) {
+                        region.y = y * thisTileHeight;
+                        region.height = (int) Math.min(
+                            thisTileHeight, descriptor.sizeY - region.y);
+                        for (int x=0; x<zero.numberOfTilesX; x++) {
+                            region.x = x * thisTileWidth;
+                            region.width = (int) Math.min(
+                                thisTileWidth, descriptor.sizeX - region.x);
+                            byte[] fullTile = getInputTileBytes(0, plane, x, y, null);
+                            byte[] downsampled = scaler.downsample(fullTile,
+                                zero.tileSizeX, zero.tileSizeY,
+                                scale, bpp, littleEndian,
+                                FormatTools.isFloatingPoint(pixelType),
+                                rgbChannels, interleaved);
+                            writeTile(plane, downsampled, region, ifd);
+                        }
                     }
                 }
             }
         }
-        writer.setResolution(0);
 
-        // add the label image, if present
-        File label = getLabelFile();
-        int nextImage = 1;
-        if (label != null && label.exists()) {
-            writer.setSeries(nextImage);
-            try {
-                helperReader.setId(label.getAbsolutePath());
-                writer.saveBytes(0, helperReader.openBytes(0));
-            }
-            finally {
-                helperReader.close();
-            }
-            nextImage++;
-        }
+        if (!legacy) {
+            writer.setResolution(0);
 
-        // add the macro image, if present
-        File macro = getMacroFile();
-        if (macro != null && macro.exists()) {
-            writer.setSeries(nextImage);
-            try {
-                helperReader.setId(macro.getAbsolutePath());
-                writer.saveBytes(0, helperReader.openBytes(0));
+            // add the label image, if present
+            File label = getLabelFile();
+            int nextImage = 1;
+            if (label != null && label.exists()) {
+                writer.setSeries(nextImage);
+                try {
+                    helperReader.setId(label.getAbsolutePath());
+                    writer.saveBytes(0, helperReader.openBytes(0));
+                }
+                finally {
+                    helperReader.close();
+                }
+                nextImage++;
             }
-            finally {
-                helperReader.close();
+
+            // add the macro image, if present
+            File macro = getMacroFile();
+            if (macro != null && macro.exists()) {
+                writer.setSeries(nextImage);
+                try {
+                    helperReader.setId(macro.getAbsolutePath());
+                    writer.saveBytes(0, helperReader.openBytes(0));
+                }
+                finally {
+                    helperReader.close();
+                }
             }
         }
 
         this.writer.close();
+        setPyramidIdentifier();
     }
 
     /**
@@ -742,8 +810,98 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
      * ignoring the .tiff extension if present.
      */
     private void sortFiles(String[] list) {
-      Arrays.sort(list, Comparator.comparingInt(
-        v -> Integer.parseInt(Files.getNameWithoutExtension(v))));
+      // may be in the form:
+      //
+      // <int coordinate>
+      //
+      // or:
+      //
+      // <int coordinate>_w<int>_z<int>_t<int>
+      if (list.length > 0 && list[0].split("_").length == 4) {
+        Comparator<String> c = Comparator.comparingInt(
+          v -> Integer.parseInt(Files.getNameWithoutExtension(v).split("_")[0]));
+        c = c.thenComparingInt(
+          v -> Integer.parseInt(Files.getNameWithoutExtension(v).split("_")[1].substring(1)));
+        c = c.thenComparingInt(
+          v -> Integer.parseInt(Files.getNameWithoutExtension(v).split("_")[2].substring(1)));
+        c = c.thenComparingInt(
+          v -> Integer.parseInt(Files.getNameWithoutExtension(v).split("_")[3].substring(1)));
+        Arrays.sort(list, c);
+      }
+      else {
+        Arrays.sort(list, Comparator.comparingInt(
+          v -> Integer.parseInt(Files.getNameWithoutExtension(v))));
+      }
+    }
+
+    private OMEXMLService getService() {
+        try {
+            ServiceFactory factory = new ServiceFactory();
+            return factory.getInstance(OMEXMLService.class);
+        }
+        catch (DependencyException e) {
+            log.warn("Could not create OME-XML service", e);
+        }
+        return null;
+    }
+
+    /**
+     * Add metadata for label and macro images (if present) to
+     * the current MetadataStore.  This does nothing if 5.9.x ("Faas")
+     * pyramids are being written.
+     */
+    private void attachExtraImageMetadata() throws FormatException, IOException
+    {
+        if (legacy) {
+            // Faas pyramid files can only contain the pyramid,
+            // not any label/macro images
+            return;
+        }
+        File label = getLabelFile();
+        File macro = getMacroFile();
+
+        int nextImage = 1;
+        if (label != null && label.exists()) {
+            try {
+                helperReader.setId(label.getAbsolutePath());
+                MetadataTools.populateMetadata(metadata, nextImage,
+                    "Label", helperReader.getCoreMetadataList().get(0));
+                nextImage++;
+            }
+            finally {
+                helperReader.close();
+            }
+        }
+        if (macro != null && macro.exists()) {
+            try {
+                helperReader.setId(macro.getAbsolutePath());
+                MetadataTools.populateMetadata(metadata, nextImage,
+                    "Macro", helperReader.getCoreMetadataList().get(0));
+                nextImage++;
+            }
+            finally {
+                helperReader.close();
+            }
+        }
+    }
+
+    /**
+     * Update the first IFD so that the file will be detected as a pyramid.
+     * This does nothing when writing 6.x-compatible OME-TIFF pyramids.
+     */
+    private void setPyramidIdentifier() throws FormatException, IOException {
+        if (!legacy) {
+            return;
+        }
+
+        try (RandomAccessInputStream in =
+                new RandomAccessInputStream(outputFilePath);
+            RandomAccessOutputStream out =
+                new RandomAccessOutputStream(outputFilePath))
+        {
+            TiffSaver saver = new TiffSaver(out, outputFilePath);
+            saver.overwriteIFDValue(in, 0, IFD.SOFTWARE, "Faas-raw2ometiff");
+        }
     }
 
 }
