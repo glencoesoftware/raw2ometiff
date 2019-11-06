@@ -9,6 +9,8 @@ package com.glencoesoftware.pyramid;
 
 import java.io.File;
 import java.io.IOException;
+import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
 import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -16,6 +18,16 @@ import java.util.Comparator;
 import java.util.Hashtable;
 import java.util.List;
 import java.util.concurrent.Callable;
+
+import org.janelia.saalfeldlab.n5.ByteArrayDataBlock;
+import org.janelia.saalfeldlab.n5.DataBlock;
+import org.janelia.saalfeldlab.n5.DoubleArrayDataBlock;
+import org.janelia.saalfeldlab.n5.FloatArrayDataBlock;
+import org.janelia.saalfeldlab.n5.IntArrayDataBlock;
+import org.janelia.saalfeldlab.n5.ShortArrayDataBlock;
+import org.janelia.saalfeldlab.n5.DatasetAttributes;
+import org.janelia.saalfeldlab.n5.N5FSReader;
+import org.janelia.saalfeldlab.n5.zarr.N5ZarrReader;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -34,6 +46,7 @@ import loci.common.services.ServiceException;
 import loci.common.services.ServiceFactory;
 import loci.formats.ClassList;
 import loci.formats.FormatException;
+import loci.formats.FormatHandler;
 import loci.formats.FormatTools;
 import loci.formats.IFormatReader;
 import loci.formats.ImageReader;
@@ -213,6 +226,8 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
     /** Reader used for opening tile files. */
     private IFormatReader helperReader = null;
 
+    private N5FSReader n5Reader = null;
+
     public PyramidFromDirectoryWriter() {
         // specify a minimal list of readers to speed up tile reading
         ClassList<IFormatReader> validReaders =
@@ -361,11 +376,40 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
         throws FormatException, IOException
     {
         ResolutionDescriptor descriptor = resolutions.get(resolution);
+        int bpp = FormatTools.getBytesPerPixel(pixelType);
         int xy = descriptor.tileSizeX * descriptor.tileSizeY;
         if (region != null) {
             xy = region.width * region.height;
         }
-        int bpp = FormatTools.getBytesPerPixel(pixelType);
+
+        if (n5Reader != null) {
+            String blockPath = "/" + resolution;
+            DataBlock block = n5Reader.readBlock(
+                blockPath, n5Reader.getDatasetAttributes(blockPath),
+                new long[] {x, y, no});
+            ByteBuffer buffer = block.toByteBuffer();
+            byte[] tile = new byte[xy * bpp * rgbChannels];
+            if (region == null || (region.width == descriptor.tileSizeX &&
+              region.height == descriptor.tileSizeY))
+            {
+                buffer.get(tile);
+            }
+            else {
+                for (int ch=0; ch<rgbChannels; ch++) {
+                    int tilePos = ch * xy * bpp;
+                    int pos =
+                        ch * descriptor.tileSizeX * descriptor.tileSizeY * bpp;
+                    buffer.position(pos);
+                    for (int row=0; row<region.height; row++) {
+                        buffer.get(tile, tilePos, region.width * bpp);
+                        buffer.position(buffer.position() +
+                            (descriptor.tileSizeX - region.width) * bpp);
+                        tilePos += region.width;
+                    }
+                }
+            }
+            return tile;
+        }
 
         String path = descriptor.tileFiles[x][y][no];
         if (path == null) {
@@ -418,14 +462,31 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
             int resolution = 0; resolution < numberOfResolutions; resolution++)
         {
             ResolutionDescriptor descriptor = new ResolutionDescriptor();
-            String file = getFirstTileFile(resolution);
-            helperReader.setId(file);
             descriptor.resolutionNumber = resolution;
-            descriptor.tileSizeX = helperReader.getSizeX();
-            descriptor.tileSizeY = helperReader.getSizeY();
-            int[] tileCount = findNumberOfTiles(resolution);
-            descriptor.numberOfTilesX = tileCount[0];
-            descriptor.numberOfTilesY = tileCount[1];
+
+            if (n5Reader == null) {
+                String file = getFirstTileFile(resolution);
+                helperReader.setId(file);
+                descriptor.tileSizeX = helperReader.getSizeX();
+                descriptor.tileSizeY = helperReader.getSizeY();
+                int[] tileCount = findNumberOfTiles(resolution);
+                descriptor.numberOfTilesX = tileCount[0];
+                descriptor.numberOfTilesY = tileCount[1];
+            }
+            else {
+                DatasetAttributes attrs =
+                    n5Reader.getDatasetAttributes("/" + resolution);
+                descriptor.tileSizeX = attrs.getBlockSize()[0];
+                descriptor.tileSizeY = attrs.getBlockSize()[1];
+                rgbChannels = attrs.getBlockSize()[2];
+                descriptor.numberOfTilesX =
+                  (int) Math.ceil(
+                      (double) attrs.getDimensions()[0] / descriptor.tileSizeX);
+                descriptor.numberOfTilesY =
+                  (int) Math.ceil(
+                      (double) attrs.getDimensions()[1] / descriptor.tileSizeY);
+            }
+
             if (resolution == 0) {
                 if (metadata.getImageCount() > 0) {
                     descriptor.sizeX =
@@ -446,13 +507,16 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
                 descriptor.sizeY =
                     resolutions.get(resolution - 1).sizeY / PYRAMID_SCALE;
             }
-            descriptor.tileFiles =
-              new String[descriptor.numberOfTilesX][descriptor.numberOfTilesY][planeCount];
-            findTileFiles(descriptor);
-            log.info("Resolution: {}; Size: [{}, {}]; " +
+
+            if (n5Reader == null) {
+                descriptor.tileFiles = new String[descriptor.numberOfTilesX][descriptor.numberOfTilesY][planeCount];
+                findTileFiles(descriptor);
+                log.info("Resolution: {}; Size: [{}, {}]; " +
                       "Grid size: [{}, {}]",
                       resolution, descriptor.sizeX, descriptor.sizeY,
                       descriptor.numberOfTilesX, descriptor.numberOfTilesY);
+            }
+
             resolutions.add(descriptor);
 
             // subresolutions will be generated from the full resolution
@@ -471,10 +535,15 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
      * Calculate the number of resolutions based upon the number
      * of directories in the base input directory.
      */
-    private void findNumberOfResolutions() {
-        File rootDirectory = new File(this.inputDirectory);
-        numberOfResolutions = rootDirectory.list(
-            (dir, name) -> new File(dir, name).isDirectory()).length;
+    private void findNumberOfResolutions() throws IOException {
+        if (n5Reader == null) {
+            File rootDirectory = new File(this.inputDirectory);
+            numberOfResolutions = rootDirectory.list(
+                (dir, name) -> new File(dir, name).isDirectory()).length;
+        }
+        else {
+            numberOfResolutions = n5Reader.list("/").length;
+        }
     }
 
     /**
@@ -530,16 +599,46 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
             throws FormatException, IOException
     {
         this.findNumberOfResolutions();
-        helperReader.setOriginalMetadataPopulated(true);
-        MetadataOptions options = new DefaultMetadataOptions();
-        options.setValidate(true);
-        helperReader.setMetadataOptions(options);
-        // Read metadata from the first tile on the grid
-        helperReader.setId(this.getFirstTileFile(0));
-        this.pixelType = helperReader.getPixelType();
-        rgbChannels = helperReader.getRGBChannelCount();
-        this.littleEndian = helperReader.isLittleEndian();
-        interleaved = helperReader.isInterleaved();
+
+        if (n5Reader == null) {
+            helperReader.setOriginalMetadataPopulated(true);
+            MetadataOptions options = new DefaultMetadataOptions();
+            options.setValidate(true);
+            helperReader.setMetadataOptions(options);
+            // Read metadata from the first tile on the grid
+            helperReader.setId(this.getFirstTileFile(0));
+            this.pixelType = helperReader.getPixelType();
+            rgbChannels = helperReader.getRGBChannelCount();
+            this.littleEndian = helperReader.isLittleEndian();
+            interleaved = helperReader.isInterleaved();
+        }
+        else {
+            interleaved = false;
+            rgbChannels = 1;
+            String blockPath = "/0";
+            DataBlock block = n5Reader.readBlock(blockPath,
+                n5Reader.getDatasetAttributes(blockPath), new long[] {0, 0, 0});
+            littleEndian =
+                block.toByteBuffer().order() == ByteOrder.LITTLE_ENDIAN;
+            if (block instanceof ByteArrayDataBlock) {
+                pixelType = FormatTools.UINT8;
+            }
+            else if (block instanceof ShortArrayDataBlock) {
+                pixelType = FormatTools.UINT16;
+            }
+            else if (block instanceof IntArrayDataBlock) {
+                pixelType = FormatTools.UINT32;
+            }
+            else if (block instanceof FloatArrayDataBlock) {
+                pixelType = FormatTools.FLOAT;
+            }
+            else if (block instanceof DoubleArrayDataBlock) {
+                pixelType = FormatTools.DOUBLE;
+            }
+            else {
+                throw new FormatException("Unsupported block type: " + block);
+            }
+        }
     }
 
     /**
@@ -547,6 +646,15 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
      * After this method is called, image data can be written.
      */
     public void initialize() throws FormatException, IOException {
+        if (FormatHandler.checkSuffix(inputDirectory, "zarr")) {
+          n5Reader = new N5ZarrReader(
+              Paths.get(inputDirectory, "pyramid.zarr").toString());
+        }
+        else if (FormatHandler.checkSuffix(inputDirectory, "n5")) {
+          n5Reader = new N5FSReader(
+              Paths.get(inputDirectory, "pyramid.n5").toString());
+        }
+
         log.info("Creating tiled pyramid file {}", this.outputFilePath);
         populateMetadataFromInputFile();
 
@@ -560,12 +668,18 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
                 xml = DataTools.readFile(omexml.getAbsolutePath());
             }
             try {
-                metadata = (OMEPyramidStore) service.createOMEXMLMetadata(xml);
+                if (xml != null) {
+                    metadata =
+                        (OMEPyramidStore) service.createOMEXMLMetadata(xml);
 
-                z = metadata.getPixelsSizeZ(0).getNumberValue().intValue();
-                c = metadata.getPixelsSizeC(0).getNumberValue().intValue();
-                t = metadata.getPixelsSizeT(0).getNumberValue().intValue();
-                planeCount = (z * c * t) / rgbChannels;
+                    z = metadata.getPixelsSizeZ(0).getNumberValue().intValue();
+                    c = metadata.getPixelsSizeC(0).getNumberValue().intValue();
+                    t = metadata.getPixelsSizeT(0).getNumberValue().intValue();
+                    planeCount = (z * c * t) / rgbChannels;
+                }
+                else {
+                    metadata = (OMEPyramidStore) service.createOMEXMLMetadata();
+                }
             }
             catch (ServiceException e) {
                 throw new FormatException("Could not parse OME-XML", e);
