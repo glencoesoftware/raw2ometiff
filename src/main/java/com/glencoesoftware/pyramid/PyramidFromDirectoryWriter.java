@@ -643,13 +643,13 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
      * After this method is called, image data can be written.
      */
     public void initialize() throws FormatException, IOException {
-        if (FormatHandler.checkSuffix(inputDirectory.toString(), "zarr")) {
-          n5Reader = new N5ZarrReader(
-              inputDirectory.resolve("pyramid.zarr").toString());
+        Path zarr = inputDirectory.resolve("pyramid.zarr");
+        if (Files.exists(zarr)) {
+          n5Reader = new N5ZarrReader(zarr.toString());
         }
-        else if (FormatHandler.checkSuffix(inputDirectory.toString(), "n5")) {
-          n5Reader = new N5FSReader(
-              inputDirectory.resolve("pyramid.n5").toString());
+        Path n5 = inputDirectory.resolve("pyramid.n5");
+        if (Files.exists(n5)) {
+          n5Reader = new N5FSReader(n5.toString());
         }
 
         log.info("Creating tiled pyramid file {}", this.outputFilePath);
