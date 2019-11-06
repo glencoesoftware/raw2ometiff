@@ -7,17 +7,18 @@
  */
 package com.glencoesoftware.pyramid;
 
-import java.io.File;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
-import java.nio.file.Paths;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Comparator;
 import java.util.Hashtable;
 import java.util.List;
 import java.util.concurrent.Callable;
+import java.util.stream.Collectors;
 
 import org.janelia.saalfeldlab.n5.ByteArrayDataBlock;
 import org.janelia.saalfeldlab.n5.DataBlock;
@@ -31,8 +32,6 @@ import org.janelia.saalfeldlab.n5.zarr.N5ZarrReader;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-
-import com.google.common.io.Files;
 
 import loci.common.DataTools;
 import loci.common.DebugTools;
@@ -139,7 +138,7 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
         required = true,
         description = "Relative path to the output OME-TIFF file"
     )
-    String outputFilePath;
+    Path outputFilePath;
 
     /** Where to read? */
     @Parameters(
@@ -147,7 +146,7 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
         arity = "1",
         description = "Directory containing pixel data to convert"
     )
-    String inputDirectory;
+    Path inputDirectory;
 
     @Option(
         names = "--debug",
@@ -220,7 +219,7 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
         Integer numberOfTilesY;
 
         /** Absolute paths to each tile, indexed by X and Y */
-        String[][][] tileFiles;
+        Path[][][] tileFiles;
     }
 
     /** Reader used for opening tile files. */
@@ -281,18 +280,16 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
      * @param resolution the pyramid level, indexed from 0 (largest)
      * @return the absolute file path to the first tile file in the resolution
      */
-    private String getFirstTileFile(int resolution) {
+    private Path getFirstTileFile(int resolution) throws IOException {
       if (generateResolutions && resolution > 0) {
           return getFirstTileFile(0);
       }
-      File directory =
-          new File(this.inputDirectory, String.valueOf(resolution));
-      String[] x = directory.list();
+      Path directory = inputDirectory.resolve(String.valueOf(resolution));
+      List<Path> x = Files.list(directory).collect(Collectors.toList());
       sortFiles(x);
-      directory = new File(directory, x[0]);
-      String[] y = directory.list();
+      List<Path> y = Files.list(x.get(0)).collect(Collectors.toList());
       sortFiles(y);
-      return new File(directory, y[0]).getAbsolutePath();
+      return y.get(0);
     }
 
     /**
@@ -300,65 +297,65 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
      *
      * @param descriptor the ResolutionDescriptor representing a resolution
      */
-    private void findTileFiles(ResolutionDescriptor descriptor) {
-        if (!generateResolutions || descriptor.resolutionNumber == 0) {
-            File directory = new File(this.inputDirectory,
-                String.valueOf(descriptor.resolutionNumber));
-            String[] x = directory.list();
-            sortFiles(x);
-            for (int xx=0; xx<x.length; xx++) {
-                File xPath = new File(directory, x[xx]);
-                String[] y = xPath.list();
-                sortFiles(y);
+    private void findTileFiles(ResolutionDescriptor descriptor)
+        throws IOException {
+      if (!generateResolutions || descriptor.resolutionNumber == 0) {
+        Path directory = inputDirectory.resolve(
+          String.valueOf(descriptor.resolutionNumber));
+        List<Path> x = Files.list(directory).collect(Collectors.toList());
+        sortFiles(x);
+        for (int xx=0; xx<x.size(); xx++) {
+          Path xPath = x.get(xx);
+          List<Path> y = Files.list(xPath).collect(Collectors.toList());
+          sortFiles(y);
 
-                for (int yy=0; yy<descriptor.tileFiles[xx].length; yy++) {
-                  int copy =
-                    (int) Math.min(planeCount, y.length - yy * planeCount);
-                  if (copy > 0 && yy * planeCount < y.length) {
-                    for (int p=0; p<copy; p++) {
-                      descriptor.tileFiles[xx][yy][p] =
-                        new File(xPath, y[yy * planeCount + p]).getAbsolutePath();
-                    }
-                  }
-                }
+          for (int yy=0; yy<descriptor.tileFiles[xx].length; yy++) {
+            int copy =
+              (int) Math.min(planeCount, y.size() - yy * planeCount);
+            if (copy > 0 && yy * planeCount < y.size()) {
+              for (int p=0; p<copy; p++) {
+                descriptor.tileFiles[xx][yy][p] = y.get(yy * planeCount + p);
+              }
             }
+          }
         }
+      }
     }
 
     /**
      * Get the label image file, which may or may not exist.
      *
-     * @return File representing the expected label image file
+     * @return Path representing the expected label image file
      */
-    private File getLabelFile() {
-      return Paths.get(this.inputDirectory, LABEL_FILE).toFile();
+    private Path getLabelFile() {
+      return inputDirectory.resolve(LABEL_FILE);
     }
 
     /**
      * Get the macro image file, which may or may not exist.
      *
-     * @return File representing the expected macro image file
+     * @return Path representing the expected macro image file
      */
-    private File getMacroFile() {
-      return Paths.get(this.inputDirectory, MACRO_FILE).toFile();
+    private Path getMacroFile() {
+      return inputDirectory.resolve(MACRO_FILE);
     }
 
     /**
      * Get the JSON metadata file, which may or may not exist.
      *
-     * @return File representing the expected JSON metadata file
+     * @return Path representing the expected JSON metadata file
      */
-    private File getMetadataFile() {
-      return Paths.get(this.inputDirectory, METADATA_FILE).toFile();
+    private Path getMetadataFile() {
+      return inputDirectory.resolve(METADATA_FILE);
     }
 
     /**
      * Get the OME-XML metadata file, which may or may not exist.
      *
-     * @return File representing the expected OME-XML metadata file
+     * @return Path representing the expected OME-XML metadata file
      */
-    private File getOMEXMLFile() {
-      return Paths.get(this.inputDirectory, OMEXML_FILE).toFile();
+    private Path getOMEXMLFile() {
+      return inputDirectory.resolve(OMEXML_FILE);
     }
 
     /**
@@ -411,17 +408,17 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
             return tile;
         }
 
-        String path = descriptor.tileFiles[x][y][no];
+        Path path = descriptor.tileFiles[x][y][no];
         if (path == null) {
             return null;
         }
-        if (!new File(path).exists()) {
+        if (!Files.exists(path)) {
             return new byte[xy * bpp * rgbChannels];
         }
         try {
             StopWatch t0 = new Slf4JStopWatch("getInputTileBytes.setId");
             try {
-                helperReader.setId(path);
+                helperReader.setId(path.toString());
             }
             finally {
                 t0.stop();
@@ -465,8 +462,8 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
             descriptor.resolutionNumber = resolution;
 
             if (n5Reader == null) {
-                String file = getFirstTileFile(resolution);
-                helperReader.setId(file);
+                Path file = getFirstTileFile(resolution);
+                helperReader.setId(file.toString());
                 descriptor.tileSizeX = helperReader.getSizeX();
                 descriptor.tileSizeY = helperReader.getSizeY();
                 int[] tileCount = findNumberOfTiles(resolution);
@@ -509,7 +506,7 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
             }
 
             if (n5Reader == null) {
-                descriptor.tileFiles = new String[descriptor.numberOfTilesX][descriptor.numberOfTilesY][planeCount];
+                descriptor.tileFiles = new Path[descriptor.numberOfTilesX][descriptor.numberOfTilesY][planeCount];
                 findTileFiles(descriptor);
                 log.info("Resolution: {}; Size: [{}, {}]; " +
                       "Grid size: [{}, {}]",
@@ -537,9 +534,9 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
      */
     private void findNumberOfResolutions() throws IOException {
         if (n5Reader == null) {
-            File rootDirectory = new File(this.inputDirectory);
-            numberOfResolutions = rootDirectory.list(
-                (dir, name) -> new File(dir, name).isDirectory()).length;
+            numberOfResolutions = Files.list(inputDirectory)
+                .filter(Files::isDirectory)
+                .collect(Collectors.toList()).size();
         }
         else {
             numberOfResolutions = n5Reader.list("/").length;
@@ -561,7 +558,7 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
      * @param resolution pyramid resolution index, starting from 0
      * @return int array of length 2, containing the number of tiles in X and Y
      */
-    private int[] findNumberOfTiles(int resolution) {
+    private int[] findNumberOfTiles(int resolution) throws IOException {
         if (generateResolutions && resolution > 0) {
             int[] tiles = findNumberOfTiles(0);
             double scale = getScale(resolution);
@@ -573,19 +570,19 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
         Find number of subdirs for X
         Find number of files in subdirs for Y
         */
-        File rootDirectory = new File(this.inputDirectory);
 
         // only list directories, ignoring label/macro/metadata files
-        String[] resolutionDirectories =
-          rootDirectory.list((dir, name) -> new File(dir, name).isDirectory());
+        List<Path> resolutionDirectories = Files.list(inputDirectory)
+            .filter(Files::isDirectory)
+            .collect(Collectors.toList());
         sortFiles(resolutionDirectories);
-        File resolutionDirectory =
-          new File(rootDirectory, resolutionDirectories[resolution]);
-        String[] xDirectories = resolutionDirectory.list();
-        int tilesX = xDirectories.length;
-        String[] yDirectories =
-          new File(resolutionDirectory, xDirectories[0]).list();
-        int tilesY = yDirectories.length / planeCount;
+        Path resolutionDirectory = resolutionDirectories.get(resolution);
+        List<Path> xDirectories = Files.list(resolutionDirectory)
+            .collect(Collectors.toList());
+        int tilesX = xDirectories.size();
+        List<Path> yDirectories = Files.list(xDirectories.get(0))
+            .collect(Collectors.toList());
+        int tilesY = yDirectories.size() / planeCount;
         return new int[] {tilesX, tilesY};
     }
 
@@ -606,7 +603,7 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
             options.setValidate(true);
             helperReader.setMetadataOptions(options);
             // Read metadata from the first tile on the grid
-            helperReader.setId(this.getFirstTileFile(0));
+            helperReader.setId(this.getFirstTileFile(0).toString());
             this.pixelType = helperReader.getPixelType();
             rgbChannels = helperReader.getRGBChannelCount();
             this.littleEndian = helperReader.isLittleEndian();
@@ -646,13 +643,13 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
      * After this method is called, image data can be written.
      */
     public void initialize() throws FormatException, IOException {
-        if (FormatHandler.checkSuffix(inputDirectory, "zarr")) {
+        if (FormatHandler.checkSuffix(inputDirectory.toString(), "zarr")) {
           n5Reader = new N5ZarrReader(
-              Paths.get(inputDirectory, "pyramid.zarr").toString());
+              inputDirectory.resolve("pyramid.zarr").toString());
         }
-        else if (FormatHandler.checkSuffix(inputDirectory, "n5")) {
+        else if (FormatHandler.checkSuffix(inputDirectory.toString(), "n5")) {
           n5Reader = new N5FSReader(
-              Paths.get(inputDirectory, "pyramid.n5").toString());
+              inputDirectory.resolve("pyramid.n5").toString());
         }
 
         log.info("Creating tiled pyramid file {}", this.outputFilePath);
@@ -662,10 +659,10 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
         Hashtable<String, Object> originalMeta =
             new Hashtable<String, Object>();
         if (service != null) {
-            File omexml = getOMEXMLFile();
+            Path omexml = getOMEXMLFile();
             String xml = null;
-            if (omexml != null && omexml.exists()) {
-                xml = DataTools.readFile(omexml.getAbsolutePath());
+            if (omexml != null && Files.exists(omexml)) {
+                xml = DataTools.readFile(omexml.toString());
             }
             try {
                 if (xml != null) {
@@ -685,10 +682,10 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
                 throw new FormatException("Could not parse OME-XML", e);
             }
 
-            File metadataFile = getMetadataFile();
-            if (metadataFile != null && metadataFile.exists()) {
+            Path metadataFile = getMetadataFile();
+            if (metadataFile != null && Files.exists(metadataFile)) {
                 String jsonMetadata =
-                    DataTools.readFile(metadataFile.getAbsolutePath());
+                    DataTools.readFile(metadataFile.toString());
                 JSONObject json = new JSONObject(jsonMetadata);
 
                 parseJSONValues(json, originalMeta, "");
@@ -753,7 +750,7 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
             writer.setCompression(compression);
         }
         writer.setInterleaved(interleaved);
-        writer.setId(this.outputFilePath);
+        writer.setId(this.outputFilePath.toString());
     }
 
     private void parseJSONValues(JSONObject root,
@@ -871,12 +868,12 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
             writer.setResolution(0);
 
             // add the label image, if present
-            File label = getLabelFile();
+            Path label = getLabelFile();
             int nextImage = 1;
-            if (label != null && label.exists()) {
+            if (label != null && Files.exists(label)) {
                 writer.setSeries(nextImage);
                 try {
-                    helperReader.setId(label.getAbsolutePath());
+                    helperReader.setId(label.toString());
                     writer.saveBytes(0, helperReader.openBytes(0));
                 }
                 finally {
@@ -886,11 +883,11 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
             }
 
             // add the macro image, if present
-            File macro = getMacroFile();
-            if (macro != null && macro.exists()) {
+            Path macro = getMacroFile();
+            if (macro != null && Files.exists(macro)) {
                 writer.setSeries(nextImage);
                 try {
-                    helperReader.setId(macro.getAbsolutePath());
+                    helperReader.setId(macro.toString());
                     writer.saveBytes(0, helperReader.openBytes(0));
                 }
                 finally {
@@ -920,10 +917,19 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
     }
 
     /**
+     * Wrapper for
+     * {@link com.google.common.io.Files#getNameWithoutExtension(String)}
+     */
+    private String getNameWithoutExtension(Path path) {
+      return com.google.common.io.Files.getNameWithoutExtension(
+	      path.toString());
+    }
+
+    /**
      * Sort a list of files names numerically,
      * ignoring the .tiff extension if present.
      */
-    private void sortFiles(String[] list) {
+    private void sortFiles(List<Path> list) {
       // may be in the form:
       //
       // <int coordinate>
@@ -931,20 +937,21 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
       // or:
       //
       // <int coordinate>_w<int>_z<int>_t<int>
-      if (list.length > 0 && list[0].split("_").length == 4) {
-        Comparator<String> c = Comparator.comparingInt(
-          v -> Integer.parseInt(Files.getNameWithoutExtension(v).split("_")[0]));
+      if (list.size() > 0
+          && list.get(0).getFileName().toString().split("_").length == 4) {
+        Comparator<Path> c = Comparator.comparingInt(
+          v -> Integer.parseInt(getNameWithoutExtension(v).split("_")[0]));
         c = c.thenComparingInt(
-          v -> Integer.parseInt(Files.getNameWithoutExtension(v).split("_")[1].substring(1)));
+          v -> Integer.parseInt(getNameWithoutExtension(v).split("_")[1].substring(1)));
         c = c.thenComparingInt(
-          v -> Integer.parseInt(Files.getNameWithoutExtension(v).split("_")[2].substring(1)));
+          v -> Integer.parseInt(getNameWithoutExtension(v).split("_")[2].substring(1)));
         c = c.thenComparingInt(
-          v -> Integer.parseInt(Files.getNameWithoutExtension(v).split("_")[3].substring(1)));
-        Arrays.sort(list, c);
+          v -> Integer.parseInt(getNameWithoutExtension(v).split("_")[3].substring(1)));
+        list.sort(c);
       }
       else {
-        Arrays.sort(list, Comparator.comparingInt(
-          v -> Integer.parseInt(Files.getNameWithoutExtension(v))));
+        list.sort(Comparator.comparingInt(
+          v -> Integer.parseInt(getNameWithoutExtension(v))));
       }
     }
 
@@ -971,13 +978,13 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
             // not any label/macro images
             return;
         }
-        File label = getLabelFile();
-        File macro = getMacroFile();
+        Path label = getLabelFile();
+        Path macro = getMacroFile();
 
         int nextImage = 1;
-        if (label != null && label.exists()) {
+        if (label != null && Files.exists(label)) {
             try {
-                helperReader.setId(label.getAbsolutePath());
+                helperReader.setId(label.toString());
                 MetadataTools.populateMetadata(metadata, nextImage,
                     "Label", helperReader.getCoreMetadataList().get(0));
                 nextImage++;
@@ -986,9 +993,9 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
                 helperReader.close();
             }
         }
-        if (macro != null && macro.exists()) {
+        if (macro != null && Files.exists(macro)) {
             try {
-                helperReader.setId(macro.getAbsolutePath());
+                helperReader.setId(macro.toString());
                 MetadataTools.populateMetadata(metadata, nextImage,
                     "Macro", helperReader.getCoreMetadataList().get(0));
                 nextImage++;
@@ -1009,11 +1016,11 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
         }
 
         try (RandomAccessInputStream in =
-                new RandomAccessInputStream(outputFilePath);
+                new RandomAccessInputStream(outputFilePath.toString());
             RandomAccessOutputStream out =
-                new RandomAccessOutputStream(outputFilePath))
+                new RandomAccessOutputStream(outputFilePath.toString()))
         {
-            TiffSaver saver = new TiffSaver(out, outputFilePath);
+            TiffSaver saver = new TiffSaver(out, outputFilePath.toString());
             saver.overwriteIFDValue(in, 0, IFD.SOFTWARE, "Faas-raw2ometiff");
         }
     }
