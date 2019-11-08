@@ -50,6 +50,7 @@ import loci.formats.FormatTools;
 import loci.formats.IFormatReader;
 import loci.formats.ImageReader;
 import loci.formats.MetadataTools;
+import loci.formats.codec.CodecOptions;
 import loci.formats.in.APNGReader;
 import loci.formats.in.BMPReader;
 import loci.formats.in.DefaultMetadataOptions;
@@ -62,6 +63,7 @@ import loci.formats.services.OMEXMLService;
 import loci.formats.tiff.IFD;
 import loci.formats.tiff.IFDList;
 import loci.formats.tiff.PhotoInterp;
+import loci.formats.tiff.TiffCompression;
 import loci.formats.tiff.TiffConstants;
 import loci.formats.tiff.TiffSaver;
 
@@ -955,11 +957,13 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
     }
 
     private int getIFDSize(IFD ifd) {
-        return 8 + TiffConstants.BIG_TIFF_BYTES_PER_ENTRY * ifd.size();
+        // subtract LITTLE_ENDIAN from the key count
+        return 8 + TiffConstants.BIG_TIFF_BYTES_PER_ENTRY * (ifd.size() - 1);
     }
 
     private IFD makeIFD(IFormatReader reader) {
         IFD ifd = new IFD();
+        ifd.put(IFD.LITTLE_ENDIAN, reader.isLittleEndian());
         ifd.put(IFD.IMAGE_WIDTH, (long) reader.getSizeX());
         ifd.put(IFD.IMAGE_LENGTH, (long) reader.getSizeY());
         ifd.put(IFD.ROWS_PER_STRIP, reader.getSizeY());
@@ -979,11 +983,13 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
         ifd.put(IFD.SOFTWARE, FormatTools.CREATOR);
         ifd.put(IFD.STRIP_BYTE_COUNTS, new long[reader.getRGBChannelCount()]);
         ifd.put(IFD.STRIP_OFFSETS, new long[reader.getRGBChannelCount()]);
+        ifd.put(IFD.COMPRESSION, TiffCompression.UNCOMPRESSED.getCode());
         return ifd;
     }
 
     private IFD makeIFD(int resolution, int plane) throws FormatException {
         IFD ifd = new IFD();
+        ifd.put(IFD.LITTLE_ENDIAN, littleEndian);
         ResolutionDescriptor descriptor = null;
         if (generateResolutions) {
           // TODO
@@ -995,6 +1001,7 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
             ifd.put(IFD.TILE_WIDTH, descriptor.tileSizeX);
             ifd.put(IFD.TILE_LENGTH, descriptor.tileSizeY);
         }
+        ifd.put(IFD.COMPRESSION, getTIFFCompression().getCode());
 
         ifd.put(IFD.PLANAR_CONFIGURATION, rgbChannels == 1 ? 1 : 2);
         ifd.put(IFD.SAMPLE_FORMAT, 1);
@@ -1063,19 +1070,33 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
                     throws FormatException, IOException
     {
         log.debug("Writing image: {}, tileIndex: {}", imageNumber, tileIndex);
-        long[] offsets = ifd.getStripOffsets();
-        long[] byteCounts = ifd.getStripByteCounts();
+        // do not use ifd.getStripByteCounts() or ifd.getStripOffsets() here
+        // as both can return values other than what is in the IFD
+        long[] offsets = ifd.getIFDLongArray(IFD.TILE_OFFSETS);
+        long[] byteCounts = ifd.getIFDLongArray(IFD.TILE_BYTE_COUNTS);
+
+        TiffCompression tiffCompression = getTIFFCompression();
+        CodecOptions options = tiffCompression.getCompressionCodecOptions(ifd);
+        options.width = (int) ifd.getTileWidth();
+        options.height = (int) ifd.getTileLength();
+        options.channels = 1;
 
         int channelBytes = buffer.length / rgbChannels;
+        byte[] channel = new byte[channelBytes];
+
         for (int s=0; s<rgbChannels; s++) {
             int realIndex = s * (offsets.length / rgbChannels) + tileIndex;
-            offsets[realIndex] = outStream.getFilePointer() + s * channelBytes;
-            byteCounts[realIndex] = channelBytes;
+            offsets[realIndex] = outStream.getFilePointer();
+
+            System.arraycopy(buffer, s * channelBytes, channel, 0, channel.length);
+            byte[] realTile = tiffCompression.compress(channel, options);
+            log.debug("    writing {} compressed bytes at {}", realTile.length, outStream.getFilePointer());
+            outStream.write(realTile);
+
+            byteCounts[realIndex] = (long) realTile.length;
         }
         ifd.put(IFD.TILE_OFFSETS, offsets);
         ifd.put(IFD.TILE_BYTE_COUNTS, byteCounts);
-
-        outStream.write(buffer);
     }
 
     /**
@@ -1168,23 +1189,23 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
         }
     }
 
-    /**
-     * Update the first IFD so that the file will be detected as a pyramid.
-     * This does nothing when writing 6.x-compatible OME-TIFF pyramids.
-     */
-    private void setPyramidIdentifier() throws FormatException, IOException {
-        if (!legacy) {
-            return;
+    private TiffCompression getTIFFCompression() {
+        if (compression.equals(TiffWriter.COMPRESSION_LZW)) {
+          return TiffCompression.LZW;
         }
-
-        try (RandomAccessInputStream in =
-                new RandomAccessInputStream(outputFilePath.toString());
-            RandomAccessOutputStream out =
-                new RandomAccessOutputStream(outputFilePath.toString()))
-        {
-            TiffSaver saver = new TiffSaver(out, outputFilePath.toString());
-            saver.overwriteIFDValue(in, 0, IFD.SOFTWARE, "Faas-raw2ometiff");
+        else if (compression.equals(TiffWriter.COMPRESSION_J2K)) {
+          return TiffCompression.JPEG_2000;
         }
+        else if (compression.equals(TiffWriter.COMPRESSION_J2K_LOSSY)) {
+          return TiffCompression.JPEG_2000_LOSSY;
+        }
+        else if (compression.equals(TiffWriter.COMPRESSION_JPEG)) {
+          return TiffCompression.JPEG;
+        }
+        else if (compression.equals(TiffWriter.COMPRESSION_ZLIB)) {
+          return TiffCompression.DEFLATE;
+        }
+        return TiffCompression.UNCOMPRESSED;
     }
 
 }
