@@ -809,7 +809,19 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
                             t0 = new Slf4JStopWatch("writeTile");
                             try {
                                 if (tileBytes != null) {
-                                    writeTile(plane, tileBytes, tileIndex, ifd);
+                                    if (region.width == descriptor.tileSizeX) {
+                                        writeTile(plane, tileBytes, tileIndex, ifd);
+                                    }
+                                    else {
+                                        // pad the tile to the correct width
+                                        byte[] realTile = new byte[descriptor.tileSizeX * (tileBytes.length / region.width)];
+                                        int inRowLen = tileBytes.length / (region.height * rgbChannels);
+                                        int outRowLen = realTile.length / (region.height * rgbChannels);
+                                        for (int row=0; row<region.height*rgbChannels; row++) {
+                                            System.arraycopy(tileBytes, row * inRowLen, realTile, row * outRowLen, inRowLen);
+                                        }
+                                        writeTile(plane, realTile, tileIndex, ifd);
+                                    }
                                 }
                             }
                             finally {
