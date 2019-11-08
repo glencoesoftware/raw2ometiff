@@ -381,11 +381,13 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
 
         if (n5Reader != null) {
             String blockPath = "/" + resolution;
+            long[] gridPosition = new long[] {x, y, no};
             DataBlock block = n5Reader.readBlock(
                 blockPath, n5Reader.getDatasetAttributes(blockPath),
-                new long[] {x, y, no});
+                gridPosition);
             ByteBuffer buffer = block.toByteBuffer();
             byte[] tile = new byte[xy * bpp * rgbChannels];
+            boolean isPadded = buffer.limit() > tile.length? true : false;
             if (region == null || (region.width == descriptor.tileSizeX &&
               region.height == descriptor.tileSizeY))
             {
@@ -399,8 +401,10 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
                     buffer.position(pos);
                     for (int row=0; row<region.height; row++) {
                         buffer.get(tile, tilePos, region.width * bpp);
-                        buffer.position(buffer.position() +
-                            (descriptor.tileSizeX - region.width) * bpp);
+                        if (isPadded) {
+                            buffer.position(buffer.position() +
+                                (descriptor.tileSizeX - region.width) * bpp);
+                        }
                         tilePos += region.width;
                     }
                 }
