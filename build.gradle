@@ -27,8 +27,9 @@ dependencies {
     compile ('ome:formats-bsd:6.2.1')
     // be careful here, this is a newer version of org.json:json than formats-gpl uses
     compile ('org.json:json:20190722')
-    compile ('org.janelia.saalfeldlab:n5-zarr:0.0.2-beta')
     compile ('org.janelia.saalfeldlab:n5:2.1.3')
+    compile ('org.janelia.saalfeldlab:n5-blosc:1.0.1')
+    compile ('org.janelia.saalfeldlab:n5-zarr:0.0.2-beta')
 }
 
 applicationDistribution.from("$projectDir") {
