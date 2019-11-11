@@ -50,6 +50,7 @@ import loci.formats.FormatTools;
 import loci.formats.IFormatReader;
 import loci.formats.ImageReader;
 import loci.formats.MetadataTools;
+import loci.formats.codec.CodecOptions;
 import loci.formats.in.APNGReader;
 import loci.formats.in.BMPReader;
 import loci.formats.in.DefaultMetadataOptions;
@@ -57,12 +58,16 @@ import loci.formats.in.JPEGReader;
 import loci.formats.in.MetadataOptions;
 import loci.formats.in.MinimalTiffReader;
 import loci.formats.ome.OMEPyramidStore;
-import loci.formats.out.PyramidOMETiffWriter;
 import loci.formats.out.TiffWriter;
 import loci.formats.services.OMEXMLService;
 import loci.formats.tiff.IFD;
+import loci.formats.tiff.IFDList;
+import loci.formats.tiff.PhotoInterp;
+import loci.formats.tiff.TiffCompression;
+import loci.formats.tiff.TiffConstants;
 import loci.formats.tiff.TiffSaver;
 
+import ome.xml.model.primitives.NonNegativeInteger;
 import ome.xml.model.primitives.PositiveInteger;
 
 import org.json.JSONObject;
@@ -109,6 +114,8 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
         }
     }
 
+    private static final long FIRST_IFD_OFFSET = 8;
+
     /** Scaling factor between two adjacent resolutions */
     private static final int PYRAMID_SCALE = 2;
 
@@ -129,7 +136,8 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
         LoggerFactory.getLogger(PyramidFromDirectoryWriter.class);
 
     /** Image writer */
-    TiffWriter writer;
+    TiffSaver writer;
+    RandomAccessOutputStream outStream;
 
     /** Where to write? */
     @Option(
@@ -362,6 +370,7 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
      * Provide tile from the input folder
      *
      * @param resolution the pyramid level, indexed from 0 (largest)
+     * @param no the plane index
      * @param x the tile X index, from 0 to numberOfTilesX
      * @param y the tile Y index, from 0 to numberOfTilesY
      * @param region specifies the width and height to read;
@@ -741,20 +750,11 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
 
         attachExtraImageMetadata();
 
-        if (legacy) {
-            writer = new TiffWriter();
-        }
-        else {
-            writer = new PyramidOMETiffWriter();
-        }
+        outStream = new RandomAccessOutputStream(outputFilePath.toString());
+        writer = new TiffSaver(outStream, outputFilePath.toString());
         writer.setBigTiff(true);
-        writer.setWriteSequentially(true);
-        writer.setMetadataRetrieve(this.metadata);
-        if (compression != null) {
-            writer.setCompression(compression);
-        }
-        writer.setInterleaved(interleaved);
-        writer.setId(this.outputFilePath.toString());
+        writer.setLittleEndian(littleEndian);
+        writer.writeHeader();
     }
 
     private void parseJSONValues(JSONObject root,
@@ -782,28 +782,23 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
      */
     public void convertToPyramid() throws FormatException, IOException {
         // convert every resolution in the pyramid
+        IFDList[] ifds = new IFDList[numberOfResolutions];
         for (int resolution=0; resolution<numberOfResolutions; resolution++) {
+            ifds[resolution] = new IFDList();
             log.info("Converting resolution #{}", resolution);
             ResolutionDescriptor descriptor = resolutions.get(resolution);
-            if (legacy) {
-                writer.setSeries(resolution);
-            }
-            else {
-                writer.setResolution(resolution);
-            }
             for (int plane=0; plane<planeCount; plane++) {
-                IFD ifd = new IFD();
+                IFD ifd = makeIFD(resolution, plane);
+                int tileIndex = 0;
                 if (!generateResolutions || resolution == 0) {
                     // if the resolution has already been calculated,
                     // just read each tile from disk and store in the OME-TIFF
-                    ifd.put(IFD.TILE_WIDTH, descriptor.tileSizeX);
-                    ifd.put(IFD.TILE_LENGTH, descriptor.tileSizeY);
                     Region region = new Region(0, 0, 0, 0);
                     for (int y = 0; y < descriptor.numberOfTilesY; y ++) {
                         region.y = y * descriptor.tileSizeY;
                         region.height = (int) Math.min(
                             descriptor.tileSizeY, descriptor.sizeY - region.y);
-                        for (int x = 0; x < descriptor.numberOfTilesX; x++) {
+                        for (int x = 0; x < descriptor.numberOfTilesX; x++, tileIndex++) {
                             region.x = x * descriptor.tileSizeX;
                             region.width = (int) Math.min(
                                 descriptor.tileSizeX, descriptor.sizeX - region.x);
@@ -819,7 +814,19 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
                             t0 = new Slf4JStopWatch("writeTile");
                             try {
                                 if (tileBytes != null) {
-                                    writeTile(plane, tileBytes, region, ifd);
+                                    if (region.width == descriptor.tileSizeX) {
+                                        writeTile(plane, tileBytes, tileIndex, ifd);
+                                    }
+                                    else {
+                                        // pad the tile to the correct width
+                                        byte[] realTile = new byte[descriptor.tileSizeX * (tileBytes.length / region.width)];
+                                        int inRowLen = tileBytes.length / (region.height * rgbChannels);
+                                        int outRowLen = realTile.length / (region.height * rgbChannels);
+                                        for (int row=0; row<region.height*rgbChannels; row++) {
+                                            System.arraycopy(tileBytes, row * inRowLen, realTile, row * outRowLen, inRowLen);
+                                        }
+                                        writeTile(plane, realTile, tileIndex, ifd);
+                                    }
                                 }
                             }
                             finally {
@@ -840,59 +847,78 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
                     IImageScaler scaler = new SimpleImageScaler();
                     ResolutionDescriptor zero = resolutions.get(0);
                     int scale = (int) getScale(resolution);
-                    ifd.put(IFD.TILE_WIDTH, descriptor.tileSizeX / scale);
-                    ifd.put(IFD.TILE_LENGTH, descriptor.tileSizeY / scale);
 
                     int bpp = FormatTools.getBytesPerPixel(pixelType);
-                    Region region = new Region();
                     int thisTileWidth = zero.tileSizeX / scale;
                     int thisTileHeight = zero.tileSizeY / scale;
                     for (int y=0; y<zero.numberOfTilesY; y++) {
-                        region.y = y * thisTileHeight;
-                        region.height = (int) Math.min(
-                            thisTileHeight, descriptor.sizeY - region.y);
-                        for (int x=0; x<zero.numberOfTilesX; x++) {
-                            region.x = x * thisTileWidth;
-                            region.width = (int) Math.min(
-                                thisTileWidth, descriptor.sizeX - region.x);
+                        for (int x=0; x<zero.numberOfTilesX; x++, tileIndex++) {
                             byte[] fullTile = getInputTileBytes(0, plane, x, y, null);
                             byte[] downsampled = scaler.downsample(fullTile,
                                 zero.tileSizeX, zero.tileSizeY,
                                 scale, bpp, littleEndian,
                                 FormatTools.isFloatingPoint(pixelType),
                                 rgbChannels, interleaved);
-                            writeTile(plane, downsampled, region, ifd);
+                            writeTile(plane, downsampled, tileIndex, ifd);
                         }
                     }
                 }
+                ifds[resolution].add(ifd);
             }
         }
 
-        if (!legacy) {
-            writer.setResolution(0);
+        IFD labelIFD = null;
+        IFD macroIFD = null;
 
+        if (!legacy) {
             // add the label image, if present
             Path label = getLabelFile();
-            int nextImage = 1;
             if (label != null && Files.exists(label)) {
-                writer.setSeries(nextImage);
                 try {
                     helperReader.setId(label.toString());
-                    writer.saveBytes(0, helperReader.openBytes(0));
+                    labelIFD = makeIFD(helperReader);
+
+                    byte[] bytes = helperReader.openBytes(0);
+                    int channelBytes =
+                        bytes.length / helperReader.getRGBChannelCount();
+                    long[] offsets = labelIFD.getStripOffsets();
+                    long[] counts = labelIFD.getStripByteCounts();
+                    for (int s=0; s<offsets.length; s++) {
+                        offsets[s] =
+                            outStream.getFilePointer() + s * channelBytes;
+                        counts[s] = channelBytes;
+                    }
+
+                    labelIFD.put(IFD.STRIP_OFFSETS, offsets);
+                    labelIFD.put(IFD.STRIP_BYTE_COUNTS, counts);
+                    outStream.write(bytes);
                 }
                 finally {
                     helperReader.close();
                 }
-                nextImage++;
             }
 
             // add the macro image, if present
             Path macro = getMacroFile();
             if (macro != null && Files.exists(macro)) {
-                writer.setSeries(nextImage);
                 try {
                     helperReader.setId(macro.toString());
-                    writer.saveBytes(0, helperReader.openBytes(0));
+                    macroIFD = makeIFD(helperReader);
+
+                    byte[] bytes = helperReader.openBytes(0);
+                    int channelBytes =
+                        bytes.length / helperReader.getRGBChannelCount();
+                    long[] offsets = macroIFD.getStripOffsets();
+                    long[] counts = macroIFD.getStripByteCounts();
+                    for (int s=0; s<offsets.length; s++) {
+                        offsets[s] =
+                            outStream.getFilePointer() + s * channelBytes;
+                        counts[s] = channelBytes;
+                    }
+
+                    macroIFD.put(IFD.STRIP_OFFSETS, offsets);
+                    macroIFD.put(IFD.STRIP_BYTE_COUNTS, counts);
+                    outStream.write(bytes);
                 }
                 finally {
                     helperReader.close();
@@ -900,8 +926,194 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
             }
         }
 
+        long[][] subs = new long[planeCount][numberOfResolutions - 1];
+        for (int plane=0; plane<planeCount; plane++) {
+          for (int resolution=1; resolution<numberOfResolutions; resolution++) {
+            subs[plane][resolution - 1] = outStream.getFilePointer();
+            int ifdSize = getIFDSize(ifds[resolution].get(plane));
+            long offsetPointer = outStream.getFilePointer() + ifdSize;
+            writer.writeIFD(ifds[resolution].get(plane), 0);
+            if (resolution < numberOfResolutions - 1) {
+              overwriteNextOffset(offsetPointer);
+            }
+          }
+        }
+        long firstIFD = outStream.getFilePointer();
+        for (int plane=0; plane<planeCount; plane++) {
+          ifds[0].get(plane).put(IFD.SUB_IFD, subs[plane]);
+          int ifdSize = getIFDSize(ifds[0].get(plane));
+          long offsetPointer = outStream.getFilePointer() + ifdSize;
+          writer.writeIFD(ifds[0].get(plane), 0);
+          if (plane < planeCount - 1 || labelIFD != null || macroIFD != null) {
+              overwriteNextOffset(offsetPointer);
+          }
+        }
+        if (labelIFD != null) {
+          int ifdSize = getIFDSize(labelIFD);
+          long offsetPointer = outStream.getFilePointer() + ifdSize;
+          writer.writeIFD(labelIFD, 0);
+          if (macroIFD != null) {
+              overwriteNextOffset(offsetPointer);
+          }
+        }
+        if (macroIFD != null) {
+          writer.writeIFD(macroIFD, 0);
+        }
+        outStream.seek(FIRST_IFD_OFFSET);
+        outStream.writeLong(firstIFD);
+
         this.writer.close();
-        setPyramidIdentifier();
+        outStream.close();
+    }
+
+    /**
+     * Overwrite an IFD offset at the given pointer.
+     * The output stream should be positioned to the new IFD offset
+     * before this method is called.
+     *
+     * @param offsetPointer pointer to the IFD offset that will be overwritten
+     */
+    private void overwriteNextOffset(long offsetPointer) throws IOException {
+        long fp = outStream.getFilePointer();
+        outStream.seek(offsetPointer);
+        outStream.writeLong(fp);
+        outStream.seek(fp);
+    }
+
+    /**
+     * Get the size in bytes of the given IFD.
+     * This size includes the IFD header and tags that would be written,
+     * but does not include the size of any non-inlined tag values.
+     * This is mainly used to calculate the file pointer at which to write
+     * the offset to the next IFD.
+     *
+     * @param ifd the IFD for which to calculate a size
+     */
+    private int getIFDSize(IFD ifd) {
+        // subtract LITTLE_ENDIAN from the key count
+        return 8 + TiffConstants.BIG_TIFF_BYTES_PER_ENTRY * (ifd.size() - 1);
+    }
+
+    /**
+     * Create an IFD using the given reader's current state.
+     * All relevant tags are filled in; strip data is filled with placeholders.
+     * This should only be used for extra images as it assumes that pixel
+     * data is stored in a single strip instead of tiles.
+     *
+     * @param reader the initialized image reader that supplies metadata
+     */
+    private IFD makeIFD(IFormatReader reader) {
+        IFD ifd = new IFD();
+        ifd.put(IFD.LITTLE_ENDIAN, reader.isLittleEndian());
+        ifd.put(IFD.IMAGE_WIDTH, (long) reader.getSizeX());
+        ifd.put(IFD.IMAGE_LENGTH, (long) reader.getSizeY());
+        ifd.put(IFD.ROWS_PER_STRIP, reader.getSizeY());
+        ifd.put(IFD.PLANAR_CONFIGURATION,
+            reader.isInterleaved() || reader.getRGBChannelCount() == 1 ? 1 : 2);
+        ifd.put(IFD.SAMPLE_FORMAT, 1);
+
+        int[] bps = new int[rgbChannels];
+        Arrays.fill(bps,
+            FormatTools.getBytesPerPixel(reader.getPixelType()) * 8);
+        ifd.put(IFD.BITS_PER_SAMPLE, bps);
+
+        ifd.put(IFD.SAMPLES_PER_PIXEL, reader.getRGBChannelCount());
+        ifd.put(IFD.PHOTOMETRIC_INTERPRETATION,
+            reader.getRGBChannelCount() == 1 ?
+            PhotoInterp.BLACK_IS_ZERO.getCode() :
+            PhotoInterp.RGB.getCode());
+
+        ifd.put(IFD.SOFTWARE, FormatTools.CREATOR);
+        ifd.put(IFD.STRIP_BYTE_COUNTS, new long[reader.getRGBChannelCount()]);
+        ifd.put(IFD.STRIP_OFFSETS, new long[reader.getRGBChannelCount()]);
+        ifd.put(IFD.COMPRESSION, TiffCompression.UNCOMPRESSED.getCode());
+        return ifd;
+    }
+
+    /**
+     * Create an IFD for the given plane in the given resolution.
+     * All relevant tags are filled in; sub-IFD and tile data are
+     * filled with placeholders.
+     *
+     * @param resolution the resolution index for the new IFD
+     * @param plane the plane index for the new IFD
+     */
+    private IFD makeIFD(int resolution, int plane) throws FormatException {
+        IFD ifd = new IFD();
+        ifd.put(IFD.LITTLE_ENDIAN, littleEndian);
+        ResolutionDescriptor descriptor = resolutions.get(resolution);
+        if (generateResolutions) {
+            int scale = (int) getScale(resolution);
+            ResolutionDescriptor zero = resolutions.get(0);
+            ifd.put(IFD.IMAGE_WIDTH, (long) (zero.sizeX / scale));
+            ifd.put(IFD.IMAGE_LENGTH, (long) (zero.sizeY / scale));
+
+            ifd.put(IFD.TILE_WIDTH, descriptor.tileSizeX / scale);
+            ifd.put(IFD.TILE_LENGTH, descriptor.tileSizeY / scale);
+        }
+        else {
+            ifd.put(IFD.IMAGE_WIDTH, (long) descriptor.sizeX);
+            ifd.put(IFD.IMAGE_LENGTH, (long) descriptor.sizeY);
+            ifd.put(IFD.TILE_WIDTH, descriptor.tileSizeX);
+            ifd.put(IFD.TILE_LENGTH, descriptor.tileSizeY);
+        }
+        ifd.put(IFD.COMPRESSION, getTIFFCompression().getCode());
+
+        ifd.put(IFD.PLANAR_CONFIGURATION, rgbChannels == 1 ? 1 : 2);
+        ifd.put(IFD.SAMPLE_FORMAT, 1);
+
+        int[] bps = new int[rgbChannels];
+        Arrays.fill(bps, FormatTools.getBytesPerPixel(pixelType) * 8);
+        ifd.put(IFD.BITS_PER_SAMPLE, bps);
+
+        ifd.put(IFD.PHOTOMETRIC_INTERPRETATION,
+            rgbChannels == 1 ? PhotoInterp.BLACK_IS_ZERO.getCode() :
+            PhotoInterp.RGB.getCode());
+        ifd.put(IFD.SAMPLES_PER_PIXEL, rgbChannels);
+
+        if (legacy) {
+            ifd.put(IFD.SOFTWARE, "Faas-raw2ometiff");
+        }
+        else {
+            ifd.put(IFD.SOFTWARE, FormatTools.CREATOR);
+        }
+
+        if (resolution == 0 && plane == 0) {
+            try {
+                metadata.setTiffDataIFD(new NonNegativeInteger(0), 0, 0);
+                metadata.setTiffDataPlaneCount(
+                    new NonNegativeInteger(planeCount), 0, 0);
+
+                for (int extra=1; extra<metadata.getImageCount(); extra++) {
+                    int ifdIndex = planeCount + extra - 1;
+                    metadata.setTiffDataIFD(
+                        new NonNegativeInteger(ifdIndex), extra, 0);
+                    metadata.setTiffDataPlaneCount(
+                        new NonNegativeInteger(1), 1, 0);
+                }
+
+                OMEXMLService service = getService();
+                String omexml = service.getOMEXML(metadata);
+                ifd.put(IFD.IMAGE_DESCRIPTION, omexml);
+            }
+            catch (ServiceException e) {
+                throw new FormatException("Could not get OME-XML", e);
+            }
+        }
+
+        int tileCount =
+            descriptor.numberOfTilesX * descriptor.numberOfTilesY * rgbChannels;
+        ifd.put(IFD.TILE_BYTE_COUNTS, new long[tileCount]);
+        ifd.put(IFD.TILE_OFFSETS, new long[tileCount]);
+
+        if (resolution == 0) {
+            ifd.put(IFD.SUB_IFD, (long) 0);
+        }
+        else {
+            ifd.put(IFD.NEW_SUBFILE_TYPE, 1);
+        }
+
+        return ifd;
     }
 
     /**
@@ -909,15 +1121,43 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
      *
      * @param imageNumber the plane number in the resolution
      * @param buffer the array containing the tile's pixel data
-     * @param region the tile boundaries
+     * @param tileIndex index of the tile to be written in XY space
+     * @param ifd initialized IFD representing the current plane
      */
     private void writeTile(
-            Integer imageNumber, byte[] buffer, Region region, IFD ifd)
+            Integer imageNumber, byte[] buffer, int tileIndex, IFD ifd)
                     throws FormatException, IOException
     {
-        log.debug("Writing image: {}, region: {}", imageNumber, region);
-        this.writer.saveBytes(imageNumber, buffer, ifd,
-            region.x, region.y, region.width, region.height);
+        log.debug("Writing image: {}, tileIndex: {}", imageNumber, tileIndex);
+        // do not use ifd.getStripByteCounts() or ifd.getStripOffsets() here
+        // as both can return values other than what is in the IFD
+        long[] offsets = ifd.getIFDLongArray(IFD.TILE_OFFSETS);
+        long[] byteCounts = ifd.getIFDLongArray(IFD.TILE_BYTE_COUNTS);
+
+        TiffCompression tiffCompression = getTIFFCompression();
+        CodecOptions options = tiffCompression.getCompressionCodecOptions(ifd);
+        options.width = (int) ifd.getTileWidth();
+        options.height = (int) ifd.getTileLength();
+        options.channels = 1;
+
+        int channelBytes = buffer.length / rgbChannels;
+        byte[] channel = new byte[channelBytes];
+
+        for (int s=0; s<rgbChannels; s++) {
+            int realIndex = s * (offsets.length / rgbChannels) + tileIndex;
+            offsets[realIndex] = outStream.getFilePointer();
+
+            System.arraycopy(
+                buffer, s * channelBytes, channel, 0, channel.length);
+            byte[] realTile = tiffCompression.compress(channel, options);
+            log.debug("    writing {} compressed bytes at {}",
+                realTile.length, outStream.getFilePointer());
+            outStream.write(realTile);
+
+            byteCounts[realIndex] = (long) realTile.length;
+        }
+        ifd.put(IFD.TILE_OFFSETS, offsets);
+        ifd.put(IFD.TILE_BYTE_COUNTS, byteCounts);
     }
 
     /**
@@ -926,7 +1166,7 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
      */
     private String getNameWithoutExtension(Path path) {
       return com.google.common.io.Files.getNameWithoutExtension(
-	      path.toString());
+        path.toString());
     }
 
     /**
@@ -959,6 +1199,11 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
       }
     }
 
+    /**
+     * Create an OMEXMLService for manipulating OME-XML metadata.
+     *
+     * @return OMEXMLService instance, or null if the service is not available
+     */
     private OMEXMLService getService() {
         try {
             ServiceFactory factory = new ServiceFactory();
@@ -1011,22 +1256,28 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
     }
 
     /**
-     * Update the first IFD so that the file will be detected as a pyramid.
-     * This does nothing when writing 6.x-compatible OME-TIFF pyramids.
+     * Convert the compression argument to a TiffCompression object that can
+     * be used to compress tiles.
+     *
+     * @return TiffCompression corresponding to the compression argument,
      */
-    private void setPyramidIdentifier() throws FormatException, IOException {
-        if (!legacy) {
-            return;
+    private TiffCompression getTIFFCompression() {
+        if (compression.equals(TiffWriter.COMPRESSION_LZW)) {
+            return TiffCompression.LZW;
         }
-
-        try (RandomAccessInputStream in =
-                new RandomAccessInputStream(outputFilePath.toString());
-            RandomAccessOutputStream out =
-                new RandomAccessOutputStream(outputFilePath.toString()))
-        {
-            TiffSaver saver = new TiffSaver(out, outputFilePath.toString());
-            saver.overwriteIFDValue(in, 0, IFD.SOFTWARE, "Faas-raw2ometiff");
+        else if (compression.equals(TiffWriter.COMPRESSION_J2K)) {
+            return TiffCompression.JPEG_2000;
         }
+        else if (compression.equals(TiffWriter.COMPRESSION_J2K_LOSSY)) {
+            return TiffCompression.JPEG_2000_LOSSY;
+        }
+        else if (compression.equals(TiffWriter.COMPRESSION_JPEG)) {
+            return TiffCompression.JPEG;
+        }
+        else if (compression.equals(TiffWriter.COMPRESSION_ZLIB)) {
+            return TiffCompression.DEFLATE;
+        }
+        return TiffCompression.UNCOMPRESSED;
     }
 
 }
