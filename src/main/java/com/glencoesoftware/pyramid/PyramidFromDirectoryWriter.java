@@ -1129,10 +1129,6 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
                     throws FormatException, IOException
     {
         log.debug("Writing image: {}, tileIndex: {}", imageNumber, tileIndex);
-        // do not use ifd.getStripByteCounts() or ifd.getStripOffsets() here
-        // as both can return values other than what is in the IFD
-        long[] offsets = ifd.getIFDLongArray(IFD.TILE_OFFSETS);
-        long[] byteCounts = ifd.getIFDLongArray(IFD.TILE_BYTE_COUNTS);
 
         TiffCompression tiffCompression = getTIFFCompression();
         CodecOptions options = tiffCompression.getCompressionCodecOptions(ifd);
@@ -1142,20 +1138,39 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
 
         int channelBytes = buffer.length / rgbChannels;
         byte[] channel = new byte[channelBytes];
+        int tileCount = ifd.getIFDLongArray(IFD.TILE_BYTE_COUNTS).length;
 
         for (int s=0; s<rgbChannels; s++) {
-            int realIndex = s * (offsets.length / rgbChannels) + tileIndex;
-            offsets[realIndex] = outStream.getFilePointer();
-
             System.arraycopy(
                 buffer, s * channelBytes, channel, 0, channel.length);
             byte[] realTile = tiffCompression.compress(channel, options);
             log.debug("    writing {} compressed bytes at {}",
                 realTile.length, outStream.getFilePointer());
-            outStream.write(realTile);
 
-            byteCounts[realIndex] = (long) realTile.length;
+            int realIndex = s * (tileCount / rgbChannels) + tileIndex;
+            writeToDisk(realTile, realIndex, ifd);
         }
+    }
+
+    /**
+     * Write a pre-compressed buffer corresponding to the given IFD and tile index.
+     *
+     * @param realTile
+     * @param tileIndex
+     * @param ifd
+     */
+    private synchronized void writeToDisk(byte[] realTile, int tileIndex, IFD ifd)
+        throws FormatException, IOException
+    {
+        // do not use ifd.getStripByteCounts() or ifd.getStripOffsets() here
+        // as both can return values other than what is in the IFD
+        long[] offsets = ifd.getIFDLongArray(IFD.TILE_OFFSETS);
+        long[] byteCounts = ifd.getIFDLongArray(IFD.TILE_BYTE_COUNTS);
+        offsets[tileIndex] = outStream.getFilePointer();
+        byteCounts[tileIndex] = (long) realTile.length;
+
+        outStream.write(realTile);
+
         ifd.put(IFD.TILE_OFFSETS, offsets);
         ifd.put(IFD.TILE_BYTE_COUNTS, byteCounts);
     }
