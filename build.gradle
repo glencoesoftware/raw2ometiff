@@ -2,6 +2,7 @@ plugins {
     id 'application'
     id 'eclipse'
     id 'java'
+    id 'checkstyle'
 }
 
 group = 'com.glencoesoftware'
@@ -35,4 +36,8 @@ dependencies {
 applicationDistribution.from("$projectDir") {
     include 'LICENSE.txt'
     include 'bin/*'
+}
+
+checkstyle {
+    toolVersion = "8.26"
 }
