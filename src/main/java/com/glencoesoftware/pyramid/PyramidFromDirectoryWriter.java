@@ -873,7 +873,32 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
                         }
                     }
                     else {
-                        throw new RuntimeException("Cannot generate resolutions");
+                        // if the resolution needs to be calculated,
+                        // read one full resolution at a time and downsample before
+                        // storing in the OME-TIFF
+                        // this means that tiles in the OME-TIFF will be progressively
+                        // smaller, e.g. 512x512 at full resolution will become
+                        // 16x16 at resolution 5
+                        // this is much simpler than trying to repack multiple
+                        // downsampled tiles into the same size tile for all resolutions
+                        IImageScaler scaler = new SimpleImageScaler();
+                        ResolutionDescriptor zero = resolutions.get(0);
+                        int scale = (int) getScale(resolution);
+
+                        int bpp = FormatTools.getBytesPerPixel(pixelType);
+                        int thisTileWidth = zero.tileSizeX / scale;
+                        int thisTileHeight = zero.tileSizeY / scale;
+                        for (int y=0; y<zero.numberOfTilesY; y++) {
+                            for (int x=0; x<zero.numberOfTilesX; x++, tileIndex++) {
+                                byte[] fullTile = getInputTileBytes(0, plane, x, y, null);
+                                byte[] downsampled = scaler.downsample(fullTile,
+                                    zero.tileSizeX, zero.tileSizeY,
+                                    scale, bpp, littleEndian,
+                                    FormatTools.isFloatingPoint(pixelType),
+                                    rgbChannels, interleaved);
+                                writeTile(plane, downsampled, tileIndex, resolution);
+                            }
+                        }
                     }
                 }
             }
