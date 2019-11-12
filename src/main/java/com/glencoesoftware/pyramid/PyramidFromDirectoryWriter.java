@@ -215,8 +215,6 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
     /** Store resolution info */
     List<ResolutionDescriptor> resolutions;
 
-    boolean generateResolutions = false;
-
     private class ResolutionDescriptor {
 
         /** Resolution index (0 = the original image) */
@@ -239,9 +237,6 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
 
         /** Number of tiles along Y axis */
         Integer numberOfTilesY;
-
-        /** Absolute paths to each tile, indexed by X and Y */
-        Path[][][] tileFiles;
     }
 
     /** Reader used for opening tile files. */
@@ -296,57 +291,6 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
     }
 
     //* Initialization */
-
-    /**
-     * Get the file path to the upper-left-most tile in the given resolution.
-     * This makes it easier to get a tile for reading metadata without
-     * assuming that the (0, 0) tile exists.
-     * Every resolution is still assumed to have at least one valid tile file.
-     *
-     * @param resolution the pyramid level, indexed from 0 (largest)
-     * @return the absolute file path to the first tile file in the resolution
-     */
-    private Path getFirstTileFile(int resolution) throws IOException {
-      if (generateResolutions && resolution > 0) {
-          return getFirstTileFile(0);
-      }
-      Path directory = inputDirectory.resolve(String.valueOf(resolution));
-      List<Path> x = Files.list(directory).collect(Collectors.toList());
-      sortFiles(x);
-      List<Path> y = Files.list(x.get(0)).collect(Collectors.toList());
-      sortFiles(y);
-      return y.get(0);
-    }
-
-    /**
-     * Fill in the paths to all tile files for the given resolution.
-     *
-     * @param descriptor the ResolutionDescriptor representing a resolution
-     */
-    private void findTileFiles(ResolutionDescriptor descriptor)
-        throws IOException {
-      if (!generateResolutions || descriptor.resolutionNumber == 0) {
-        Path directory = inputDirectory.resolve(
-          String.valueOf(descriptor.resolutionNumber));
-        List<Path> x = Files.list(directory).collect(Collectors.toList());
-        sortFiles(x);
-        for (int xx=0; xx<x.size(); xx++) {
-          Path xPath = x.get(xx);
-          List<Path> y = Files.list(xPath).collect(Collectors.toList());
-          sortFiles(y);
-
-          for (int yy=0; yy<descriptor.tileFiles[xx].length; yy++) {
-            int copy =
-              (int) Math.min(planeCount, y.size() - yy * planeCount);
-            if (copy > 0 && yy * planeCount < y.size()) {
-              for (int p=0; p<copy; p++) {
-                descriptor.tileFiles[xx][yy][p] = y.get(yy * planeCount + p);
-              }
-            }
-          }
-        }
-      }
-    }
 
     /**
      * Get the label image file, which may or may not exist.
@@ -406,82 +350,41 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
             xy = region.width * region.height;
         }
 
-        if (n5Reader != null) {
-            String blockPath = "/" + resolution;
-            long[] gridPosition = new long[] {x, y, no};
-            DataBlock block = n5Reader.readBlock(
-                blockPath, n5Reader.getDatasetAttributes(blockPath),
-                gridPosition);
-            ByteBuffer buffer = block.toByteBuffer();
-            byte[] tile = new byte[xy * bpp * rgbChannels];
-            boolean isPadded = buffer.limit() > tile.length? true : false;
-            if (region == null || (region.width == descriptor.tileSizeX &&
-              region.height == descriptor.tileSizeY))
-            {
-                buffer.get(tile);
-            }
-            else {
-                for (int ch=0; ch<rgbChannels; ch++) {
-                    int tilePos = ch * xy * bpp;
-                    int pos =
-                        ch * descriptor.tileSizeX * descriptor.tileSizeY * bpp;
-                    buffer.position(pos);
-                    for (int row=0; row<region.height; row++) {
-                        buffer.get(tile, tilePos, region.width * bpp);
-                        if (isPadded) {
-                            buffer.position(buffer.position() +
-                                (descriptor.tileSizeX - region.width) * bpp);
-                        }
-                        tilePos += region.width;
+        String blockPath = "/" + resolution;
+        long[] gridPosition = new long[] {x, y, no};
+        DataBlock block = n5Reader.readBlock(
+            blockPath, n5Reader.getDatasetAttributes(blockPath),
+            gridPosition);
+        ByteBuffer buffer = block.toByteBuffer();
+        byte[] tile = new byte[xy * bpp * rgbChannels];
+        boolean isPadded = buffer.limit() > tile.length? true : false;
+        if (region == null || (region.width == descriptor.tileSizeX &&
+          region.height == descriptor.tileSizeY))
+        {
+            buffer.get(tile);
+        }
+        else {
+            for (int ch=0; ch<rgbChannels; ch++) {
+                int tilePos = ch * xy * bpp;
+                int pos =
+                    ch * descriptor.tileSizeX * descriptor.tileSizeY * bpp;
+                buffer.position(pos);
+                for (int row=0; row<region.height; row++) {
+                    buffer.get(tile, tilePos, region.width * bpp);
+                    if (isPadded) {
+                        buffer.position(buffer.position() +
+                            (descriptor.tileSizeX - region.width) * bpp);
                     }
+                    tilePos += region.width;
                 }
             }
-            return tile;
         }
-
-        Path path = descriptor.tileFiles[x][y][no];
-        if (path == null) {
-            return null;
-        }
-        if (!Files.exists(path)) {
-            return new byte[xy * bpp * rgbChannels];
-        }
-        try {
-            StopWatch t0 = new Slf4JStopWatch("getInputTileBytes.setId");
-            try {
-                helperReader.setId(path.toString());
-            }
-            finally {
-                t0.stop();
-            }
-            if (region == null) {
-                t0 = new Slf4JStopWatch("getInputTileBytes.openBytes");
-                try {
-                    return helperReader.openBytes(0);
-                }
-                finally {
-                    t0.stop();
-                }
-            }
-            t0 = new Slf4JStopWatch("getInputTileBytes.openBytesWithRegion");
-            try {
-                return helperReader.openBytes(
-                        0, 0, 0, region.width, region.height);
-            }
-            finally {
-                t0.stop();
-            }
-        }
-        finally {
-            helperReader.close();
-        }
+        return tile;
     }
 
     /**
      * Calculate image width and height for each resolution.
-     * Uses the first tile in the resolution to find the tile size,
-     * and {@link #findNumberOfTiles(int)} to find the number of tiles
-     * in X and Y.
+     * Uses the first tile in the resolution to find the tile size.
      */
     public void describePyramid() throws FormatException, IOException {
         log.info("Number of resolution levels: {}", numberOfResolutions);
@@ -492,28 +395,17 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
             ResolutionDescriptor descriptor = new ResolutionDescriptor();
             descriptor.resolutionNumber = resolution;
 
-            if (n5Reader == null) {
-                Path file = getFirstTileFile(resolution);
-                helperReader.setId(file.toString());
-                descriptor.tileSizeX = helperReader.getSizeX();
-                descriptor.tileSizeY = helperReader.getSizeY();
-                int[] tileCount = findNumberOfTiles(resolution);
-                descriptor.numberOfTilesX = tileCount[0];
-                descriptor.numberOfTilesY = tileCount[1];
-            }
-            else {
-                DatasetAttributes attrs =
-                    n5Reader.getDatasetAttributes("/" + resolution);
-                descriptor.tileSizeX = attrs.getBlockSize()[0];
-                descriptor.tileSizeY = attrs.getBlockSize()[1];
-                rgbChannels = attrs.getBlockSize()[2];
-                descriptor.numberOfTilesX =
-                  (int) Math.ceil(
-                      (double) attrs.getDimensions()[0] / descriptor.tileSizeX);
-                descriptor.numberOfTilesY =
-                  (int) Math.ceil(
-                      (double) attrs.getDimensions()[1] / descriptor.tileSizeY);
-            }
+            DatasetAttributes attrs =
+                n5Reader.getDatasetAttributes("/" + resolution);
+            descriptor.tileSizeX = attrs.getBlockSize()[0];
+            descriptor.tileSizeY = attrs.getBlockSize()[1];
+            rgbChannels = attrs.getBlockSize()[2];
+            descriptor.numberOfTilesX =
+              (int) Math.ceil(
+                  (double) attrs.getDimensions()[0] / descriptor.tileSizeX);
+            descriptor.numberOfTilesY =
+              (int) Math.ceil(
+                  (double) attrs.getDimensions()[1] / descriptor.tileSizeY);
 
             if (resolution == 0) {
                 if (metadata.getImageCount() > 0) {
@@ -536,26 +428,7 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
                     resolutions.get(resolution - 1).sizeY / PYRAMID_SCALE;
             }
 
-            if (n5Reader == null) {
-                descriptor.tileFiles = new Path[descriptor.numberOfTilesX][descriptor.numberOfTilesY][planeCount];
-                findTileFiles(descriptor);
-                log.info("Resolution: {}; Size: [{}, {}]; " +
-                      "Grid size: [{}, {}]",
-                      resolution, descriptor.sizeX, descriptor.sizeY,
-                      descriptor.numberOfTilesX, descriptor.numberOfTilesY);
-            }
-
             resolutions.add(descriptor);
-
-            // subresolutions will be generated from the full resolution
-            if (resolution == 0 && numberOfResolutions == 1) {
-                generateResolutions = true;
-                while (descriptor.sizeX / getScale(numberOfResolutions) >=
-                    descriptor.tileSizeX)
-                {
-                    numberOfResolutions++;
-                }
-            }
         }
     }
 
@@ -564,14 +437,7 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
      * of directories in the base input directory.
      */
     private void findNumberOfResolutions() throws IOException {
-        if (n5Reader == null) {
-            numberOfResolutions = Files.list(inputDirectory)
-                .filter(Files::isDirectory)
-                .collect(Collectors.toList()).size();
-        }
-        else {
-            numberOfResolutions = n5Reader.list("/").length;
-        }
+        numberOfResolutions = n5Reader.list("/").length;
     }
 
     /**
@@ -581,40 +447,6 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
      */
     private double getScale(int resolution) {
         return Math.pow(PYRAMID_SCALE, resolution);
-    }
-
-    /**
-     * Return number of tiles in X, Y for a given resolution
-     *
-     * @param resolution pyramid resolution index, starting from 0
-     * @return int array of length 2, containing the number of tiles in X and Y
-     */
-    private int[] findNumberOfTiles(int resolution) throws IOException {
-        if (generateResolutions && resolution > 0) {
-            int[] tiles = findNumberOfTiles(0);
-            double scale = getScale(resolution);
-            tiles[0] = (int) Math.ceil(tiles[0] / scale);
-            tiles[1] = (int) Math.ceil(tiles[1] / scale);
-            return tiles;
-        }
-        /*
-        Find number of subdirs for X
-        Find number of files in subdirs for Y
-        */
-
-        // only list directories, ignoring label/macro/metadata files
-        List<Path> resolutionDirectories = Files.list(inputDirectory)
-            .filter(Files::isDirectory)
-            .collect(Collectors.toList());
-        sortFiles(resolutionDirectories);
-        Path resolutionDirectory = resolutionDirectories.get(resolution);
-        List<Path> xDirectories = Files.list(resolutionDirectory)
-            .collect(Collectors.toList());
-        int tilesX = xDirectories.size();
-        List<Path> yDirectories = Files.list(xDirectories.get(0))
-            .collect(Collectors.toList());
-        int tilesY = yDirectories.size() / planeCount;
-        return new int[] {tilesX, tilesY};
     }
 
     /**
@@ -628,44 +460,30 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
     {
         this.findNumberOfResolutions();
 
-        if (n5Reader == null) {
-            helperReader.setOriginalMetadataPopulated(true);
-            MetadataOptions options = new DefaultMetadataOptions();
-            options.setValidate(true);
-            helperReader.setMetadataOptions(options);
-            // Read metadata from the first tile on the grid
-            helperReader.setId(this.getFirstTileFile(0).toString());
-            this.pixelType = helperReader.getPixelType();
-            rgbChannels = helperReader.getRGBChannelCount();
-            this.littleEndian = helperReader.isLittleEndian();
-            interleaved = helperReader.isInterleaved();
+        interleaved = false;
+        rgbChannels = 1;
+        String blockPath = "/0";
+        DataBlock block = n5Reader.readBlock(blockPath,
+            n5Reader.getDatasetAttributes(blockPath), new long[] {0, 0, 0});
+        littleEndian =
+            block.toByteBuffer().order() == ByteOrder.LITTLE_ENDIAN;
+        if (block instanceof ByteArrayDataBlock) {
+            pixelType = FormatTools.UINT8;
+        }
+        else if (block instanceof ShortArrayDataBlock) {
+            pixelType = FormatTools.UINT16;
+        }
+        else if (block instanceof IntArrayDataBlock) {
+            pixelType = FormatTools.UINT32;
+        }
+        else if (block instanceof FloatArrayDataBlock) {
+            pixelType = FormatTools.FLOAT;
+        }
+        else if (block instanceof DoubleArrayDataBlock) {
+            pixelType = FormatTools.DOUBLE;
         }
         else {
-            interleaved = false;
-            rgbChannels = 1;
-            String blockPath = "/0";
-            DataBlock block = n5Reader.readBlock(blockPath,
-                n5Reader.getDatasetAttributes(blockPath), new long[] {0, 0, 0});
-            littleEndian =
-                block.toByteBuffer().order() == ByteOrder.LITTLE_ENDIAN;
-            if (block instanceof ByteArrayDataBlock) {
-                pixelType = FormatTools.UINT8;
-            }
-            else if (block instanceof ShortArrayDataBlock) {
-                pixelType = FormatTools.UINT16;
-            }
-            else if (block instanceof IntArrayDataBlock) {
-                pixelType = FormatTools.UINT32;
-            }
-            else if (block instanceof FloatArrayDataBlock) {
-                pixelType = FormatTools.FLOAT;
-            }
-            else if (block instanceof DoubleArrayDataBlock) {
-                pixelType = FormatTools.DOUBLE;
-            }
-            else {
-                throw new FormatException("Unsupported block type: " + block);
-            }
+            throw new FormatException("Unsupported block type: " + block);
         }
     }
 
@@ -681,6 +499,10 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
         Path n5 = inputDirectory.resolve("pyramid.n5");
         if (Files.exists(n5)) {
           n5Reader = new N5FSReader(n5.toString());
+        }
+
+        if (n5Reader == null) {
+          throw new FormatException("Could not create an N5 reader");
         }
 
         log.info("Creating tiled pyramid file {}", this.outputFilePath);
@@ -817,87 +639,57 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
                 ResolutionDescriptor descriptor = resolutions.get(resolution);
                 for (int plane=0; plane<planeCount; plane++) {
                     int tileIndex = 0;
-                    if (!generateResolutions || resolution == 0) {
-                        // if the resolution has already been calculated,
-                        // just read each tile from disk and store in the OME-TIFF
-                        for (int y = 0; y < descriptor.numberOfTilesY; y ++) {
-                            for (int x = 0; x < descriptor.numberOfTilesX; x++, tileIndex++) {
-                                Region region = new Region(
-                                    x * descriptor.tileSizeX,
-                                    y * descriptor.tileSizeY, 0, 0);
-                                region.width = (int) Math.min(
-                                    descriptor.tileSizeX, descriptor.sizeX - region.x);
-                                region.height = (int) Math.min(
-                                    descriptor.tileSizeY, descriptor.sizeY - region.y);
+                    // if the resolution has already been calculated,
+                    // just read each tile from disk and store in the OME-TIFF
+                    for (int y = 0; y < descriptor.numberOfTilesY; y ++) {
+                        for (int x = 0; x < descriptor.numberOfTilesX; x++, tileIndex++) {
+                            Region region = new Region(
+                                x * descriptor.tileSizeX,
+                                y * descriptor.tileSizeY, 0, 0);
+                            region.width = (int) Math.min(
+                                descriptor.tileSizeX, descriptor.sizeX - region.x);
+                            region.height = (int) Math.min(
+                                descriptor.tileSizeY, descriptor.sizeY - region.y);
 
-                                StopWatch t0 = new Slf4JStopWatch("getInputTileBytes");
-                                byte[] tileBytes;
+                            StopWatch t0 = new Slf4JStopWatch("getInputTileBytes");
+                            byte[] tileBytes;
+                            try {
+                                tileBytes =
+                                    getInputTileBytes(resolution, plane, x, y, region);
+                            }
+                            finally {
+                                t0.stop();
+                            }
+
+                            final int currentIndex = tileIndex;
+                            final int currentPlane = plane;
+                            final int currentResolution = resolution;
+                            executor.execute(() -> {
+                                Slf4JStopWatch t1 = new Slf4JStopWatch("writeTile");
                                 try {
-                                    tileBytes =
-                                        getInputTileBytes(resolution, plane, x, y, region);
-                                }
-                                finally {
-                                    t0.stop();
-                                }
-
-                                final int currentIndex = tileIndex;
-                                final int currentPlane = plane;
-                                final int currentResolution = resolution;
-                                executor.execute(() -> {
-                                    Slf4JStopWatch t1 = new Slf4JStopWatch("writeTile");
-                                    try {
-                                        if (tileBytes != null) {
-                                            if (region.width == descriptor.tileSizeX) {
-                                                writeTile(currentPlane, tileBytes, currentIndex, currentResolution);
+                                    if (tileBytes != null) {
+                                        if (region.width == descriptor.tileSizeX) {
+                                            writeTile(currentPlane, tileBytes, currentIndex, currentResolution);
+                                        }
+                                        else {
+                                            // pad the tile to the correct width
+                                            byte[] realTile = new byte[descriptor.tileSizeX * (tileBytes.length / region.width)];
+                                            int inRowLen = tileBytes.length / (region.height * rgbChannels);
+                                            int outRowLen = realTile.length / (region.height * rgbChannels);
+                                            for (int row=0; row<region.height*rgbChannels; row++) {
+                                                System.arraycopy(tileBytes, row * inRowLen, realTile, row * outRowLen, inRowLen);
                                             }
-                                            else {
-                                                // pad the tile to the correct width
-                                                byte[] realTile = new byte[descriptor.tileSizeX * (tileBytes.length / region.width)];
-                                                int inRowLen = tileBytes.length / (region.height * rgbChannels);
-                                                int outRowLen = realTile.length / (region.height * rgbChannels);
-                                                for (int row=0; row<region.height*rgbChannels; row++) {
-                                                    System.arraycopy(tileBytes, row * inRowLen, realTile, row * outRowLen, inRowLen);
-                                                }
-                                                writeTile(currentPlane, realTile, currentIndex, currentResolution);
-                                            }
+                                            writeTile(currentPlane, realTile, currentIndex, currentResolution);
                                         }
                                     }
-                                    catch (FormatException|IOException e) {
-                                        log.error("Failed to write tile in resolution " + currentResolution, e);
-                                    }
-                                    finally {
-                                        t1.stop();
-                                    }
-                                });
-                            }
-                        }
-                    }
-                    else {
-                        // if the resolution needs to be calculated,
-                        // read one full resolution at a time and downsample before
-                        // storing in the OME-TIFF
-                        // this means that tiles in the OME-TIFF will be progressively
-                        // smaller, e.g. 512x512 at full resolution will become
-                        // 16x16 at resolution 5
-                        // this is much simpler than trying to repack multiple
-                        // downsampled tiles into the same size tile for all resolutions
-                        IImageScaler scaler = new SimpleImageScaler();
-                        ResolutionDescriptor zero = resolutions.get(0);
-                        int scale = (int) getScale(resolution);
-
-                        int bpp = FormatTools.getBytesPerPixel(pixelType);
-                        int thisTileWidth = zero.tileSizeX / scale;
-                        int thisTileHeight = zero.tileSizeY / scale;
-                        for (int y=0; y<zero.numberOfTilesY; y++) {
-                            for (int x=0; x<zero.numberOfTilesX; x++, tileIndex++) {
-                                byte[] fullTile = getInputTileBytes(0, plane, x, y, null);
-                                byte[] downsampled = scaler.downsample(fullTile,
-                                    zero.tileSizeX, zero.tileSizeY,
-                                    scale, bpp, littleEndian,
-                                    FormatTools.isFloatingPoint(pixelType),
-                                    rgbChannels, interleaved);
-                                writeTile(plane, downsampled, tileIndex, resolution);
-                            }
+                                }
+                                catch (FormatException|IOException e) {
+                                    log.error("Failed to write tile in resolution " + currentResolution, e);
+                                }
+                                finally {
+                                    t1.stop();
+                                }
+                            });
                         }
                     }
                 }
@@ -1083,21 +875,10 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
         IFD ifd = new IFD();
         ifd.put(IFD.LITTLE_ENDIAN, littleEndian);
         ResolutionDescriptor descriptor = resolutions.get(resolution);
-        if (generateResolutions) {
-            int scale = (int) getScale(resolution);
-            ResolutionDescriptor zero = resolutions.get(0);
-            ifd.put(IFD.IMAGE_WIDTH, (long) (zero.sizeX / scale));
-            ifd.put(IFD.IMAGE_LENGTH, (long) (zero.sizeY / scale));
-
-            ifd.put(IFD.TILE_WIDTH, descriptor.tileSizeX / scale);
-            ifd.put(IFD.TILE_LENGTH, descriptor.tileSizeY / scale);
-        }
-        else {
-            ifd.put(IFD.IMAGE_WIDTH, (long) descriptor.sizeX);
-            ifd.put(IFD.IMAGE_LENGTH, (long) descriptor.sizeY);
-            ifd.put(IFD.TILE_WIDTH, descriptor.tileSizeX);
-            ifd.put(IFD.TILE_LENGTH, descriptor.tileSizeY);
-        }
+        ifd.put(IFD.IMAGE_WIDTH, (long) descriptor.sizeX);
+        ifd.put(IFD.IMAGE_LENGTH, (long) descriptor.sizeY);
+        ifd.put(IFD.TILE_WIDTH, descriptor.tileSizeX);
+        ifd.put(IFD.TILE_LENGTH, descriptor.tileSizeY);
         ifd.put(IFD.COMPRESSION, getTIFFCompression().getCode());
 
         ifd.put(IFD.PLANAR_CONFIGURATION, rgbChannels == 1 ? 1 : 2);
@@ -1218,45 +999,6 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
 
         ifd.put(IFD.TILE_OFFSETS, offsets);
         ifd.put(IFD.TILE_BYTE_COUNTS, byteCounts);
-    }
-
-    /**
-     * Wrapper for
-     * {@link com.google.common.io.Files#getNameWithoutExtension(String)}
-     */
-    private String getNameWithoutExtension(Path path) {
-      return com.google.common.io.Files.getNameWithoutExtension(
-        path.toString());
-    }
-
-    /**
-     * Sort a list of files names numerically,
-     * ignoring the .tiff extension if present.
-     */
-    private void sortFiles(List<Path> list) {
-      // may be in the form:
-      //
-      // <int coordinate>
-      //
-      // or:
-      //
-      // <int coordinate>_w<int>_z<int>_t<int>
-      if (list.size() > 0
-          && list.get(0).getFileName().toString().split("_").length == 4) {
-        Comparator<Path> c = Comparator.comparingInt(
-          v -> Integer.parseInt(getNameWithoutExtension(v).split("_")[0]));
-        c = c.thenComparingInt(
-          v -> Integer.parseInt(getNameWithoutExtension(v).split("_")[1].substring(1)));
-        c = c.thenComparingInt(
-          v -> Integer.parseInt(getNameWithoutExtension(v).split("_")[2].substring(1)));
-        c = c.thenComparingInt(
-          v -> Integer.parseInt(getNameWithoutExtension(v).split("_")[3].substring(1)));
-        list.sort(c);
-      }
-      else {
-        list.sort(Comparator.comparingInt(
-          v -> Integer.parseInt(getNameWithoutExtension(v))));
-      }
     }
 
     /**
