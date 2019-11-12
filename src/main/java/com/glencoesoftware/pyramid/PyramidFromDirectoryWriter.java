@@ -19,7 +19,6 @@ import java.util.Hashtable;
 import java.util.List;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.Callable;
-import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
@@ -813,7 +812,6 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
         }
 
         try {
-            List<CompletableFuture<Void>> futures = new ArrayList<CompletableFuture<Void>>();
             for (int resolution=0; resolution<numberOfResolutions; resolution++) {
                 log.info("Converting resolution #{}", resolution);
                 ResolutionDescriptor descriptor = resolutions.get(resolution);
@@ -822,15 +820,16 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
                     if (!generateResolutions || resolution == 0) {
                         // if the resolution has already been calculated,
                         // just read each tile from disk and store in the OME-TIFF
-                        Region region = new Region(0, 0, 0, 0);
                         for (int y = 0; y < descriptor.numberOfTilesY; y ++) {
-                            region.y = y * descriptor.tileSizeY;
-                            region.height = (int) Math.min(
-                                descriptor.tileSizeY, descriptor.sizeY - region.y);
                             for (int x = 0; x < descriptor.numberOfTilesX; x++, tileIndex++) {
-                                region.x = x * descriptor.tileSizeX;
+                                Region region = new Region(
+                                    x * descriptor.tileSizeX,
+                                    y * descriptor.tileSizeY, 0, 0);
                                 region.width = (int) Math.min(
                                     descriptor.tileSizeX, descriptor.sizeX - region.x);
+                                region.height = (int) Math.min(
+                                    descriptor.tileSizeY, descriptor.sizeY - region.y);
+
                                 StopWatch t0 = new Slf4JStopWatch("getInputTileBytes");
                                 byte[] tileBytes;
                                 try {
@@ -840,41 +839,36 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
                                 finally {
                                     t0.stop();
                                 }
-                                t0 = new Slf4JStopWatch("writeTile");
-                                try {
-                                    CompletableFuture<Void> future = new CompletableFuture<Void>();
-                                    futures.add(future);
 
-                                    final int currentIndex = tileIndex;
-                                    final int currentPlane = plane;
-                                    final int currentResolution = resolution;
-                                    executor.execute(() -> {
-                                        try {
-                                            if (tileBytes != null) {
-                                                if (region.width == descriptor.tileSizeX) {
-                                                    writeTile(currentPlane, tileBytes, currentIndex, currentResolution);
-                                                }
-                                                else {
-                                                    // pad the tile to the correct width
-                                                    byte[] realTile = new byte[descriptor.tileSizeX * (tileBytes.length / region.width)];
-                                                    int inRowLen = tileBytes.length / (region.height * rgbChannels);
-                                                    int outRowLen = realTile.length / (region.height * rgbChannels);
-                                                    for (int row=0; row<region.height*rgbChannels; row++) {
-                                                        System.arraycopy(tileBytes, row * inRowLen, realTile, row * outRowLen, inRowLen);
-                                                    }
-                                                    writeTile(currentPlane, realTile, currentIndex, currentResolution);
-                                                }
+                                final int currentIndex = tileIndex;
+                                final int currentPlane = plane;
+                                final int currentResolution = resolution;
+                                executor.execute(() -> {
+                                    Slf4JStopWatch t1 = new Slf4JStopWatch("writeTile");
+                                    try {
+                                        if (tileBytes != null) {
+                                            if (region.width == descriptor.tileSizeX) {
+                                                writeTile(currentPlane, tileBytes, currentIndex, currentResolution);
                                             }
-                                            future.complete(null);
+                                            else {
+                                                // pad the tile to the correct width
+                                                byte[] realTile = new byte[descriptor.tileSizeX * (tileBytes.length / region.width)];
+                                                int inRowLen = tileBytes.length / (region.height * rgbChannels);
+                                                int outRowLen = realTile.length / (region.height * rgbChannels);
+                                                for (int row=0; row<region.height*rgbChannels; row++) {
+                                                    System.arraycopy(tileBytes, row * inRowLen, realTile, row * outRowLen, inRowLen);
+                                                }
+                                                writeTile(currentPlane, realTile, currentIndex, currentResolution);
+                                            }
                                         }
-                                        catch (FormatException|IOException e) {
-                                            future.completeExceptionally(e);
-                                        }
-                                    });
-                                }
-                                finally {
-                                    t0.stop();
-                                }
+                                    }
+                                    catch (FormatException|IOException e) {
+                                        log.error("Failed to write tile in resolution " + currentResolution, e);
+                                    }
+                                    finally {
+                                        t1.stop();
+                                    }
+                                });
                             }
                         }
                     }
