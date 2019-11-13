@@ -32,11 +32,11 @@ import org.janelia.saalfeldlab.n5.DatasetAttributes;
 import org.janelia.saalfeldlab.n5.N5FSReader;
 import org.janelia.saalfeldlab.n5.zarr.N5ZarrReader;
 
+import ch.qos.logback.classic.Level;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import loci.common.DataTools;
-import loci.common.DebugTools;
 import loci.common.RandomAccessOutputStream;
 import loci.common.Region;
 import loci.common.services.DependencyException;
@@ -262,9 +262,15 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
 
   @Override
   public Void call() throws InterruptedException {
-    if (!debug) {
-      DebugTools.setRootLevel("INFO");
+    ch.qos.logback.classic.Logger root = (ch.qos.logback.classic.Logger)
+      LoggerFactory.getLogger(Logger.ROOT_LOGGER_NAME);
+    if (debug) {
+      root.setLevel(Level.DEBUG);
     }
+    else {
+      root.setLevel(Level.INFO);
+    }
+
     try {
       StopWatch t0 = new Slf4JStopWatch("initialize");
       try {
