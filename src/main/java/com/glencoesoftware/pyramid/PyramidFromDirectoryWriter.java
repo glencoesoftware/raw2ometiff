@@ -140,10 +140,9 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
   private IFDList[] ifds;
 
   /** Where to write? */
-  @Option(
-      names = "--output",
+  @Parameters(
+      index = "1",
       arity = "1",
-      required = true,
       description = "Relative path to the output OME-TIFF file"
   )
   Path outputFilePath;
