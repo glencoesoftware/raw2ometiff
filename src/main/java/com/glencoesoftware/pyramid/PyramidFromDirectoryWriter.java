@@ -17,7 +17,11 @@ import java.util.Arrays;
 import java.util.Comparator;
 import java.util.Hashtable;
 import java.util.List;
+import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.Callable;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
 import org.janelia.saalfeldlab.n5.ByteArrayDataBlock;
@@ -139,6 +143,10 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
     TiffSaver writer;
     RandomAccessOutputStream outStream;
 
+    private BlockingQueue<Runnable> tileQueue;
+    private ExecutorService executor;
+    private IFDList[] ifds;
+
     /** Where to write? */
     @Option(
         names = "--output",
@@ -175,6 +183,12 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
         description = "Write a Bio-Formats 5.9.x pyramid instead of OME-TIFF"
     )
     boolean legacy = false;
+
+    @Option(
+        names = "--max_workers",
+        description = "Maximum number of workers (default: ${DEFAULT-VALUE})"
+    )
+    int maxWorkers = Runtime.getRuntime().availableProcessors();
 
     /** FormatTools pixel type */
     Integer pixelType;
@@ -244,6 +258,10 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
         validReaders.addClass(JPEGReader.class);
         validReaders.addClass(APNGReader.class);
         helperReader = new ImageReader(validReaders);
+
+        tileQueue = new LimitedQueue<Runnable>(maxWorkers);
+        executor = new ThreadPoolExecutor(
+              maxWorkers, maxWorkers, 0L, TimeUnit.MILLISECONDS, tileQueue);
     }
 
     public static void main(String[] args) {
@@ -251,7 +269,7 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
     }
 
     @Override
-    public Void call() {
+    public Void call() throws InterruptedException {
         if (!debug) {
             DebugTools.setRootLevel("INFO");
         }
@@ -780,91 +798,114 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
     /**
      * Writes all image data to the initialized TIFF writer
      */
-    public void convertToPyramid() throws FormatException, IOException {
+    public void convertToPyramid()
+        throws FormatException, IOException, InterruptedException
+    {
         // convert every resolution in the pyramid
-        IFDList[] ifds = new IFDList[numberOfResolutions];
+        ifds = new IFDList[numberOfResolutions];
         for (int resolution=0; resolution<numberOfResolutions; resolution++) {
             ifds[resolution] = new IFDList();
-            log.info("Converting resolution #{}", resolution);
-            ResolutionDescriptor descriptor = resolutions.get(resolution);
             for (int plane=0; plane<planeCount; plane++) {
                 IFD ifd = makeIFD(resolution, plane);
-                int tileIndex = 0;
-                if (!generateResolutions || resolution == 0) {
-                    // if the resolution has already been calculated,
-                    // just read each tile from disk and store in the OME-TIFF
-                    Region region = new Region(0, 0, 0, 0);
-                    for (int y = 0; y < descriptor.numberOfTilesY; y ++) {
-                        region.y = y * descriptor.tileSizeY;
-                        region.height = (int) Math.min(
-                            descriptor.tileSizeY, descriptor.sizeY - region.y);
-                        for (int x = 0; x < descriptor.numberOfTilesX; x++, tileIndex++) {
-                            region.x = x * descriptor.tileSizeX;
-                            region.width = (int) Math.min(
-                                descriptor.tileSizeX, descriptor.sizeX - region.x);
-                            StopWatch t0 = new Slf4JStopWatch("getInputTileBytes");
-                            byte[] tileBytes;
-                            try {
-                                tileBytes =
-                                    getInputTileBytes(resolution, plane, x, y, region);
-                            }
-                            finally {
-                                t0.stop();
-                            }
-                            t0 = new Slf4JStopWatch("writeTile");
-                            try {
-                                if (tileBytes != null) {
-                                    if (region.width == descriptor.tileSizeX) {
-                                        writeTile(plane, tileBytes, tileIndex, ifd);
-                                    }
-                                    else {
-                                        // pad the tile to the correct width
-                                        byte[] realTile = new byte[descriptor.tileSizeX * (tileBytes.length / region.width)];
-                                        int inRowLen = tileBytes.length / (region.height * rgbChannels);
-                                        int outRowLen = realTile.length / (region.height * rgbChannels);
-                                        for (int row=0; row<region.height*rgbChannels; row++) {
-                                            System.arraycopy(tileBytes, row * inRowLen, realTile, row * outRowLen, inRowLen);
-                                        }
-                                        writeTile(plane, realTile, tileIndex, ifd);
-                                    }
-                                }
-                            }
-                            finally {
-                                t0.stop();
-                            }
-                        }
-                    }
-                }
-                else {
-                    // if the resolution needs to be calculated,
-                    // read one full resolution at a time and downsample before
-                    // storing in the OME-TIFF
-                    // this means that tiles in the OME-TIFF will be progressively
-                    // smaller, e.g. 512x512 at full resolution will become
-                    // 16x16 at resolution 5
-                    // this is much simpler than trying to repack multiple
-                    // downsampled tiles into the same size tile for all resolutions
-                    IImageScaler scaler = new SimpleImageScaler();
-                    ResolutionDescriptor zero = resolutions.get(0);
-                    int scale = (int) getScale(resolution);
-
-                    int bpp = FormatTools.getBytesPerPixel(pixelType);
-                    int thisTileWidth = zero.tileSizeX / scale;
-                    int thisTileHeight = zero.tileSizeY / scale;
-                    for (int y=0; y<zero.numberOfTilesY; y++) {
-                        for (int x=0; x<zero.numberOfTilesX; x++, tileIndex++) {
-                            byte[] fullTile = getInputTileBytes(0, plane, x, y, null);
-                            byte[] downsampled = scaler.downsample(fullTile,
-                                zero.tileSizeX, zero.tileSizeY,
-                                scale, bpp, littleEndian,
-                                FormatTools.isFloatingPoint(pixelType),
-                                rgbChannels, interleaved);
-                            writeTile(plane, downsampled, tileIndex, ifd);
-                        }
-                    }
-                }
                 ifds[resolution].add(ifd);
             }
+        }
+
+        try {
+            for (int resolution=0; resolution<numberOfResolutions; resolution++) {
+                log.info("Converting resolution #{}", resolution);
+                ResolutionDescriptor descriptor = resolutions.get(resolution);
+                for (int plane=0; plane<planeCount; plane++) {
+                    int tileIndex = 0;
+                    if (!generateResolutions || resolution == 0) {
+                        // if the resolution has already been calculated,
+                        // just read each tile from disk and store in the OME-TIFF
+                        for (int y = 0; y < descriptor.numberOfTilesY; y ++) {
+                            for (int x = 0; x < descriptor.numberOfTilesX; x++, tileIndex++) {
+                                Region region = new Region(
+                                    x * descriptor.tileSizeX,
+                                    y * descriptor.tileSizeY, 0, 0);
+                                region.width = (int) Math.min(
+                                    descriptor.tileSizeX, descriptor.sizeX - region.x);
+                                region.height = (int) Math.min(
+                                    descriptor.tileSizeY, descriptor.sizeY - region.y);
+
+                                StopWatch t0 = new Slf4JStopWatch("getInputTileBytes");
+                                byte[] tileBytes;
+                                try {
+                                    tileBytes =
+                                        getInputTileBytes(resolution, plane, x, y, region);
+                                }
+                                finally {
+                                    t0.stop();
+                                }
+
+                                final int currentIndex = tileIndex;
+                                final int currentPlane = plane;
+                                final int currentResolution = resolution;
+                                executor.execute(() -> {
+                                    Slf4JStopWatch t1 = new Slf4JStopWatch("writeTile");
+                                    try {
+                                        if (tileBytes != null) {
+                                            if (region.width == descriptor.tileSizeX) {
+                                                writeTile(currentPlane, tileBytes, currentIndex, currentResolution);
+                                            }
+                                            else {
+                                                // pad the tile to the correct width
+                                                byte[] realTile = new byte[descriptor.tileSizeX * (tileBytes.length / region.width)];
+                                                int inRowLen = tileBytes.length / (region.height * rgbChannels);
+                                                int outRowLen = realTile.length / (region.height * rgbChannels);
+                                                for (int row=0; row<region.height*rgbChannels; row++) {
+                                                    System.arraycopy(tileBytes, row * inRowLen, realTile, row * outRowLen, inRowLen);
+                                                }
+                                                writeTile(currentPlane, realTile, currentIndex, currentResolution);
+                                            }
+                                        }
+                                    }
+                                    catch (FormatException|IOException e) {
+                                        log.error("Failed to write tile in resolution " + currentResolution, e);
+                                    }
+                                    finally {
+                                        t1.stop();
+                                    }
+                                });
+                            }
+                        }
+                    }
+                    else {
+                        // if the resolution needs to be calculated,
+                        // read one full resolution at a time and downsample before
+                        // storing in the OME-TIFF
+                        // this means that tiles in the OME-TIFF will be progressively
+                        // smaller, e.g. 512x512 at full resolution will become
+                        // 16x16 at resolution 5
+                        // this is much simpler than trying to repack multiple
+                        // downsampled tiles into the same size tile for all resolutions
+                        IImageScaler scaler = new SimpleImageScaler();
+                        ResolutionDescriptor zero = resolutions.get(0);
+                        int scale = (int) getScale(resolution);
+
+                        int bpp = FormatTools.getBytesPerPixel(pixelType);
+                        int thisTileWidth = zero.tileSizeX / scale;
+                        int thisTileHeight = zero.tileSizeY / scale;
+                        for (int y=0; y<zero.numberOfTilesY; y++) {
+                            for (int x=0; x<zero.numberOfTilesX; x++, tileIndex++) {
+                                byte[] fullTile = getInputTileBytes(0, plane, x, y, null);
+                                byte[] downsampled = scaler.downsample(fullTile,
+                                    zero.tileSizeX, zero.tileSizeY,
+                                    scale, bpp, littleEndian,
+                                    FormatTools.isFloatingPoint(pixelType),
+                                    rgbChannels, interleaved);
+                                writeTile(plane, downsampled, tileIndex, resolution);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        finally {
+            executor.shutdown();
+            executor.awaitTermination(Long.MAX_VALUE, TimeUnit.NANOSECONDS);
         }
 
         IFD labelIFD = null;
@@ -1125,15 +1166,12 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
      * @param ifd initialized IFD representing the current plane
      */
     private void writeTile(
-            Integer imageNumber, byte[] buffer, int tileIndex, IFD ifd)
+            Integer imageNumber, byte[] buffer, int tileIndex, int resolution)
                     throws FormatException, IOException
     {
         log.debug("Writing image: {}, tileIndex: {}", imageNumber, tileIndex);
-        // do not use ifd.getStripByteCounts() or ifd.getStripOffsets() here
-        // as both can return values other than what is in the IFD
-        long[] offsets = ifd.getIFDLongArray(IFD.TILE_OFFSETS);
-        long[] byteCounts = ifd.getIFDLongArray(IFD.TILE_BYTE_COUNTS);
 
+        IFD ifd = ifds[resolution].get(imageNumber);
         TiffCompression tiffCompression = getTIFFCompression();
         CodecOptions options = tiffCompression.getCompressionCodecOptions(ifd);
         options.width = (int) ifd.getTileWidth();
@@ -1142,20 +1180,42 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
 
         int channelBytes = buffer.length / rgbChannels;
         byte[] channel = new byte[channelBytes];
+        int tileCount = ifd.getIFDLongArray(IFD.TILE_BYTE_COUNTS).length;
 
         for (int s=0; s<rgbChannels; s++) {
-            int realIndex = s * (offsets.length / rgbChannels) + tileIndex;
-            offsets[realIndex] = outStream.getFilePointer();
-
             System.arraycopy(
                 buffer, s * channelBytes, channel, 0, channel.length);
             byte[] realTile = tiffCompression.compress(channel, options);
             log.debug("    writing {} compressed bytes at {}",
                 realTile.length, outStream.getFilePointer());
-            outStream.write(realTile);
 
-            byteCounts[realIndex] = (long) realTile.length;
+            int realIndex = s * (tileCount / rgbChannels) + tileIndex;
+            writeToDisk(realTile, realIndex, resolution, imageNumber);
         }
+    }
+
+    /**
+     * Write a pre-compressed buffer corresponding to the given IFD and tile index.
+     *
+     * @param realTile
+     * @param tileIndex
+     * @param ifd
+     */
+    private synchronized void writeToDisk(byte[] realTile, int tileIndex,
+        int resolution, int imageNumber)
+        throws FormatException, IOException
+    {
+        IFD ifd = ifds[resolution].get(imageNumber);
+
+        // do not use ifd.getStripByteCounts() or ifd.getStripOffsets() here
+        // as both can return values other than what is in the IFD
+        long[] offsets = ifd.getIFDLongArray(IFD.TILE_OFFSETS);
+        long[] byteCounts = ifd.getIFDLongArray(IFD.TILE_BYTE_COUNTS);
+        offsets[tileIndex] = outStream.getFilePointer();
+        byteCounts[tileIndex] = (long) realTile.length;
+
+        outStream.write(realTile);
+
         ifd.put(IFD.TILE_OFFSETS, offsets);
         ifd.put(IFD.TILE_BYTE_COUNTS, byteCounts);
     }
