@@ -6,6 +6,11 @@ raw2ometiff converter
 Java application to convert a directory of tiles to an OME-TIFF pyramid.
 This is the second half of iSyntax/.mrxs => OME-TIFF conversion.
 
+Requirements
+============
+
+libblosc (https://github.com/Blosc/c-blosc) version 1.9.0 or later must be installed separately.
+The native libraries are not packaged with any relevant jars.  See also note in n5-zarr readme (https://github.com/saalfeldlab/n5-zarr/blob/0.0.2-beta/README.md)
 
 Usage
 =====
@@ -33,9 +38,6 @@ The input tile directory must contain a full pyramid in a Zarr or N5 container.
 By default, LZW compression will be used in the OME-TIFF file.
 The compression can be changed using the `--compression` option.
 Tile compression is performed in parallel.  The number of workers can be changed using the `--max_workers` option.
-
-If working with zarr pyramids, libblosc (https://github.com/Blosc/c-blosc) version 1.9.0 or later must be installed separately.
-The native libraries are not packaged with any relevant jars.  See also note in n5-zarr readme (https://github.com/saalfeldlab/n5-zarr/blob/0.0.2-beta/README.md)
 
 Areas to improve
 ================
