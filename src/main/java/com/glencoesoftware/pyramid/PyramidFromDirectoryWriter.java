@@ -360,7 +360,7 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
       gridPosition);
     ByteBuffer buffer = block.toByteBuffer();
     byte[] tile = new byte[xy * bpp * rgbChannels];
-    boolean isPadded = buffer.limit() > tile.length? true : false;
+    boolean isPadded = buffer.limit() > tile.length;
     if (region == null || (region.width == descriptor.tileSizeX &&
       region.height == descriptor.tileSizeY))
     {
@@ -377,7 +377,7 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
             buffer.position(buffer.position() +
               (descriptor.tileSizeX - region.width) * bpp);
           }
-          tilePos += region.width;
+          tilePos += region.width * bpp;
         }
       }
     }
@@ -520,6 +520,7 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
           c = metadata.getPixelsSizeC(0).getNumberValue().intValue();
           t = metadata.getPixelsSizeT(0).getNumberValue().intValue();
           planeCount = (z * c * t) / rgbChannels;
+          littleEndian = !metadata.getPixelsBigEndian(0);
         }
         else {
           metadata = (OMEPyramidStore) service.createOMEXMLMetadata();
