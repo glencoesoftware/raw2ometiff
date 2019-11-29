@@ -9,7 +9,6 @@ package com.glencoesoftware.pyramid;
 
 import java.io.IOException;
 import java.nio.ByteBuffer;
-import java.nio.ByteOrder;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -22,12 +21,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 
-import org.janelia.saalfeldlab.n5.ByteArrayDataBlock;
 import org.janelia.saalfeldlab.n5.DataBlock;
-import org.janelia.saalfeldlab.n5.DoubleArrayDataBlock;
-import org.janelia.saalfeldlab.n5.FloatArrayDataBlock;
-import org.janelia.saalfeldlab.n5.IntArrayDataBlock;
-import org.janelia.saalfeldlab.n5.ShortArrayDataBlock;
 import org.janelia.saalfeldlab.n5.DatasetAttributes;
 import org.janelia.saalfeldlab.n5.N5FSReader;
 import org.janelia.saalfeldlab.n5.zarr.N5ZarrReader;
@@ -62,7 +56,9 @@ import loci.formats.tiff.PhotoInterp;
 import loci.formats.tiff.TiffCompression;
 import loci.formats.tiff.TiffConstants;
 import loci.formats.tiff.TiffSaver;
-
+import ome.xml.meta.OMEXMLMetadataRoot;
+import ome.xml.model.Image;
+import ome.xml.model.Pixels;
 import ome.xml.model.primitives.NonNegativeInteger;
 import ome.xml.model.primitives.PositiveInteger;
 
@@ -181,18 +177,13 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
   /** FormatTools pixel type. */
   Integer pixelType;
 
-  /** Number of RGB channels. */
-  int rgbChannels;
-
   /** Writer metadata. */
   OMEPyramidStore metadata;
 
   /** Number of resolutions. */
-  Integer numberOfResolutions;
+  int numberOfResolutions;
 
-  Boolean littleEndian;
-
-  Boolean interleaved;
+  boolean littleEndian;
 
   int planeCount = 1;
   int z = 1;
@@ -258,7 +249,7 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
   }
 
   @Override
-  public Void call() throws InterruptedException {
+  public Void call() throws Exception {
     ch.qos.logback.classic.Logger root = (ch.qos.logback.classic.Logger)
       LoggerFactory.getLogger(Logger.ROOT_LOGGER_NAME);
     if (debug) {
@@ -361,7 +352,7 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
     }
 
     ByteBuffer buffer = block.toByteBuffer();
-    byte[] tile = new byte[xy * bpp * rgbChannels];
+    byte[] tile = new byte[xy * bpp];
     boolean isPadded = buffer.limit() > tile.length;
     if (region == null || (region.width == descriptor.tileSizeX &&
       region.height == descriptor.tileSizeY))
@@ -369,18 +360,14 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
       buffer.get(tile);
     }
     else {
-      for (int ch=0; ch<rgbChannels; ch++) {
-        int tilePos = ch * xy * bpp;
-        int pos = ch * descriptor.tileSizeX * descriptor.tileSizeY * bpp;
-        buffer.position(pos);
-        for (int row=0; row<region.height; row++) {
-          buffer.get(tile, tilePos, region.width * bpp);
-          if (isPadded) {
-            buffer.position(buffer.position() +
-              (descriptor.tileSizeX - region.width) * bpp);
-          }
-          tilePos += region.width * bpp;
+      int tilePos = 0;
+      for (int row=0; row<region.height; row++) {
+        buffer.get(tile, tilePos, region.width * bpp);
+        if (isPadded) {
+          buffer.position(buffer.position() +
+            (descriptor.tileSizeX - region.width) * bpp);
         }
+        tilePos += region.width * bpp;
       }
     }
     return tile;
@@ -402,7 +389,6 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
       descriptor.sizeY = (int) attrs.getDimensions()[1];
       descriptor.tileSizeX = attrs.getBlockSize()[0];
       descriptor.tileSizeY = attrs.getBlockSize()[1];
-      rgbChannels = attrs.getBlockSize()[2];
       descriptor.numberOfTilesX =
         getTileCount(descriptor.sizeX, descriptor.tileSizeX);
       descriptor.numberOfTilesY =
@@ -440,47 +426,10 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
   }
 
   /**
-   * Populate number of channels, pixels types, endianess, etc.
-   * based on the first tile
-   * @throws IOException
-   * @throws FormatException
-   */
-  private void populateMetadataFromInputFile()
-          throws FormatException, IOException
-  {
-    this.findNumberOfResolutions();
-
-    interleaved = false;
-    rgbChannels = 1;
-    String blockPath = "/0";
-    DataBlock<?> block = n5Reader.readBlock(blockPath,
-      n5Reader.getDatasetAttributes(blockPath), new long[] {0, 0, 0});
-    littleEndian = block.toByteBuffer().order() == ByteOrder.LITTLE_ENDIAN;
-    if (block instanceof ByteArrayDataBlock) {
-      pixelType = FormatTools.UINT8;
-    }
-    else if (block instanceof ShortArrayDataBlock) {
-      pixelType = FormatTools.UINT16;
-    }
-    else if (block instanceof IntArrayDataBlock) {
-      pixelType = FormatTools.UINT32;
-    }
-    else if (block instanceof FloatArrayDataBlock) {
-      pixelType = FormatTools.FLOAT;
-    }
-    else if (block instanceof DoubleArrayDataBlock) {
-      pixelType = FormatTools.DOUBLE;
-    }
-    else {
-      throw new FormatException("Unsupported block type: " + block);
-    }
-  }
-
-  /**
    * Set up the TIFF writer with all necessary metadata.
    * After this method is called, image data can be written.
    */
-  public void initialize() throws FormatException, IOException {
+  public void initialize() throws FormatException, IOException, DependencyException {
     Path zarr = inputDirectory.resolve("pyramid.zarr");
     if (Files.exists(zarr)) {
       n5Reader = new N5ZarrReader(zarr.toString());
@@ -495,7 +444,7 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
     }
 
     LOG.info("Creating tiled pyramid file {}", this.outputFilePath);
-    populateMetadataFromInputFile();
+    findNumberOfResolutions();
 
     OMEXMLService service = getService();
     Hashtable<String, Object> originalMeta = new Hashtable<String, Object>();
@@ -512,11 +461,10 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
           z = metadata.getPixelsSizeZ(0).getNumberValue().intValue();
           c = metadata.getPixelsSizeC(0).getNumberValue().intValue();
           t = metadata.getPixelsSizeT(0).getNumberValue().intValue();
-          rgbChannels = metadata.getChannelSamplesPerPixel(
-            0, 0).getNumberValue().intValue();
-          planeCount = (z * c * t) / rgbChannels;
-          c /= rgbChannels;
+          planeCount = z * c * t;
           littleEndian = !metadata.getPixelsBigEndian(0);
+          pixelType = FormatTools.pixelTypeFromString(
+            metadata.getPixelsType(0).getValue());
         }
         else {
           metadata = (OMEPyramidStore) service.createOMEXMLMetadata();
@@ -525,16 +473,16 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
       catch (ServiceException e) {
         throw new FormatException("Could not parse OME-XML", e);
       }
+    }
 
-      Path metadataFile = getMetadataFile();
-      if (metadataFile != null && Files.exists(metadataFile)) {
-        String jsonMetadata = DataTools.readFile(metadataFile.toString());
-        JSONObject json = new JSONObject(jsonMetadata);
+    Path metadataFile = getMetadataFile();
+    if (metadataFile != null && Files.exists(metadataFile)) {
+      String jsonMetadata = DataTools.readFile(metadataFile.toString());
+      JSONObject json = new JSONObject(jsonMetadata);
 
-        parseJSONValues(json, originalMeta, "");
+      parseJSONValues(json, originalMeta, "");
 
-        service.populateOriginalMetadata(metadata, originalMeta);
-      }
+      service.populateOriginalMetadata(metadata, originalMeta);
     }
 
     describePyramid();
@@ -547,16 +495,14 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
         MetadataTools.populateMetadata(
           this.metadata, 0, null, this.littleEndian, "XYCZT",
           FormatTools.getPixelTypeString(this.pixelType),
-          descriptor.sizeX, descriptor.sizeY, z,
-          rgbChannels * c, t, rgbChannels);
+          descriptor.sizeX, descriptor.sizeY, z, c, t, 1);
       }
       else {
         if (legacy) {
           MetadataTools.populateMetadata(this.metadata,
             descriptor.resolutionNumber, null, this.littleEndian,
             "XYCZT", FormatTools.getPixelTypeString(pixelType),
-            descriptor.sizeX, descriptor.sizeY,
-            z, rgbChannels * c, t, rgbChannels);
+            descriptor.sizeX, descriptor.sizeY, z, c, t, 1);
         }
         else {
           metadata.setResolutionSizeX(new PositiveInteger(
@@ -600,7 +546,7 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
    * Writes all image data to the initialized TIFF writer.
    */
   public void convertToPyramid()
-    throws FormatException, IOException, InterruptedException
+    throws FormatException, IOException, InterruptedException, DependencyException
   {
     // convert every resolution in the pyramid
     ifds = new IFDList[numberOfResolutions];
@@ -659,7 +605,7 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
                       int paddedHeight = tileBytes.length / region.width;
                       byte[] realTile =
                         new byte[descriptor.tileSizeX * paddedHeight];
-                      int totalRows = region.height * rgbChannels;
+                      int totalRows = region.height;
                       int inRowLen = tileBytes.length / totalRows;
                       int outRowLen = realTile.length / totalRows;
                       for (int row=0; row<totalRows; row++) {
@@ -836,7 +782,7 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
       reader.isInterleaved() || reader.getRGBChannelCount() == 1 ? 1 : 2);
     ifd.put(IFD.SAMPLE_FORMAT, 1);
 
-    int[] bps = new int[rgbChannels];
+    int[] bps = new int[1];
     Arrays.fill(bps, FormatTools.getBytesPerPixel(reader.getPixelType()) * 8);
     ifd.put(IFD.BITS_PER_SAMPLE, bps);
 
@@ -861,7 +807,7 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
    * @param plane the plane index for the new IFD
    * @return an IFD that is ready to be filled with tile data
    */
-  private IFD makeIFD(int resolution, int plane) throws FormatException {
+  private IFD makeIFD(int resolution, int plane) throws FormatException, DependencyException {
     IFD ifd = new IFD();
     ifd.put(IFD.LITTLE_ENDIAN, littleEndian);
     ResolutionDescriptor descriptor = resolutions.get(resolution);
@@ -871,17 +817,15 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
     ifd.put(IFD.TILE_LENGTH, descriptor.tileSizeY);
     ifd.put(IFD.COMPRESSION, getTIFFCompression().getCode());
 
-    ifd.put(IFD.PLANAR_CONFIGURATION, rgbChannels == 1 ? 1 : 2);
+    ifd.put(IFD.PLANAR_CONFIGURATION, 1);
     ifd.put(IFD.SAMPLE_FORMAT, 1);
 
-    int[] bps = new int[rgbChannels];
+    int[] bps = new int[1];
     Arrays.fill(bps, FormatTools.getBytesPerPixel(pixelType) * 8);
     ifd.put(IFD.BITS_PER_SAMPLE, bps);
 
-    ifd.put(IFD.PHOTOMETRIC_INTERPRETATION,
-      rgbChannels == 1 ? PhotoInterp.BLACK_IS_ZERO.getCode() :
-      PhotoInterp.RGB.getCode());
-    ifd.put(IFD.SAMPLES_PER_PIXEL, rgbChannels);
+    ifd.put(IFD.PHOTOMETRIC_INTERPRETATION, PhotoInterp.BLACK_IS_ZERO.getCode());
+    ifd.put(IFD.SAMPLES_PER_PIXEL, 1);
 
     if (legacy) {
       ifd.put(IFD.SOFTWARE, "Faas-raw2ometiff");
@@ -911,8 +855,7 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
       }
     }
 
-    int tileCount =
-      descriptor.numberOfTilesX * descriptor.numberOfTilesY * rgbChannels;
+    int tileCount = descriptor.numberOfTilesX * descriptor.numberOfTilesY;
     ifd.put(IFD.TILE_BYTE_COUNTS, new long[tileCount]);
     ifd.put(IFD.TILE_OFFSETS, new long[tileCount]);
 
@@ -949,19 +892,11 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
     options.height = (int) ifd.getTileLength();
     options.channels = 1;
 
-    int channelBytes = buffer.length / rgbChannels;
-    byte[] channel = new byte[channelBytes];
-    int tileCount = ifd.getIFDLongArray(IFD.TILE_BYTE_COUNTS).length;
+    byte[] realTile = tiffCompression.compress(buffer, options);
+    LOG.debug("    writing {} compressed bytes at {}",
+      realTile.length, outStream.getFilePointer());
 
-    for (int s=0; s<rgbChannels; s++) {
-      System.arraycopy(buffer, s * channelBytes, channel, 0, channel.length);
-      byte[] realTile = tiffCompression.compress(channel, options);
-      LOG.debug("    writing {} compressed bytes at {}",
-        realTile.length, outStream.getFilePointer());
-
-      int realIndex = s * (tileCount / rgbChannels) + tileIndex;
-      writeToDisk(realTile, realIndex, resolution, imageNumber);
-    }
+    writeToDisk(realTile, tileIndex, resolution, imageNumber);
   }
 
   /**
@@ -997,15 +932,9 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
    *
    * @return OMEXMLService instance, or null if the service is not available
    */
-  private OMEXMLService getService() {
-    try {
-      ServiceFactory factory = new ServiceFactory();
-      return factory.getInstance(OMEXMLService.class);
-    }
-    catch (DependencyException e) {
-      LOG.warn("Could not create OME-XML service", e);
-    }
-    return null;
+  private OMEXMLService getService() throws DependencyException {
+    ServiceFactory factory = new ServiceFactory();
+    return factory.getInstance(OMEXMLService.class);
   }
 
   /**
