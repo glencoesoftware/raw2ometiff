@@ -57,7 +57,6 @@ import loci.formats.tiff.TiffCompression;
 import loci.formats.tiff.TiffConstants;
 import loci.formats.tiff.TiffSaver;
 import ome.xml.meta.OMEXMLMetadataRoot;
-import ome.xml.model.Image;
 import ome.xml.model.Pixels;
 import ome.xml.model.primitives.NonNegativeInteger;
 import ome.xml.model.primitives.PositiveInteger;
@@ -429,7 +428,9 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
    * Set up the TIFF writer with all necessary metadata.
    * After this method is called, image data can be written.
    */
-  public void initialize() throws FormatException, IOException, DependencyException {
+  public void initialize()
+    throws FormatException, IOException, DependencyException
+  {
     Path zarr = inputDirectory.resolve("pyramid.zarr");
     if (Files.exists(zarr)) {
       n5Reader = new N5ZarrReader(zarr.toString());
@@ -465,6 +466,12 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
           littleEndian = !metadata.getPixelsBigEndian(0);
           pixelType = FormatTools.pixelTypeFromString(
             metadata.getPixelsType(0).getValue());
+
+          OMEXMLMetadataRoot root = (OMEXMLMetadataRoot) metadata.getRoot();
+          for (int image = 0; image<root.sizeOfImageList(); image++) {
+            Pixels pixels = root.getImage(image).getPixels();
+            pixels.setMetadataOnly(null);
+          }
         }
         else {
           metadata = (OMEPyramidStore) service.createOMEXMLMetadata();
@@ -546,7 +553,8 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
    * Writes all image data to the initialized TIFF writer.
    */
   public void convertToPyramid()
-    throws FormatException, IOException, InterruptedException, DependencyException
+    throws FormatException, IOException,
+      InterruptedException, DependencyException
   {
     // convert every resolution in the pyramid
     ifds = new IFDList[numberOfResolutions];
@@ -807,7 +815,9 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
    * @param plane the plane index for the new IFD
    * @return an IFD that is ready to be filled with tile data
    */
-  private IFD makeIFD(int resolution, int plane) throws FormatException, DependencyException {
+  private IFD makeIFD(int resolution, int plane)
+    throws FormatException, DependencyException
+  {
     IFD ifd = new IFD();
     ifd.put(IFD.LITTLE_ENDIAN, littleEndian);
     ResolutionDescriptor descriptor = resolutions.get(resolution);
@@ -824,7 +834,8 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
     Arrays.fill(bps, FormatTools.getBytesPerPixel(pixelType) * 8);
     ifd.put(IFD.BITS_PER_SAMPLE, bps);
 
-    ifd.put(IFD.PHOTOMETRIC_INTERPRETATION, PhotoInterp.BLACK_IS_ZERO.getCode());
+    ifd.put(IFD.PHOTOMETRIC_INTERPRETATION,
+      PhotoInterp.BLACK_IS_ZERO.getCode());
     ifd.put(IFD.SAMPLES_PER_PIXEL, 1);
 
     if (legacy) {
