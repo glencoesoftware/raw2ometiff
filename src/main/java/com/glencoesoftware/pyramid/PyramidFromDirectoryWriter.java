@@ -755,38 +755,40 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
       }
     }
 
-    long[][] subs = new long[planeCount][numberOfResolutions - 1];
-    for (int plane=0; plane<planeCount; plane++) {
-      for (int resolution=1; resolution<numberOfResolutions; resolution++) {
-        subs[plane][resolution - 1] = outStream.getFilePointer();
-        int ifdSize = getIFDSize(ifds[resolution].get(plane));
-        long offsetPointer = outStream.getFilePointer() + ifdSize;
-        writer.writeIFD(ifds[resolution].get(plane), 0);
-        if (resolution < numberOfResolutions - 1) {
-          overwriteNextOffset(offsetPointer);
+    long firstIFD = outStream.getFilePointer();
+
+    if (legacy) {
+      for (int resolution=0; resolution<numberOfResolutions; resolution++) {
+        for (int plane=0; plane<planeCount; plane++) {
+          writeIFD(resolution, plane, true);
         }
       }
     }
-    long firstIFD = outStream.getFilePointer();
-    for (int plane=0; plane<planeCount; plane++) {
-      ifds[0].get(plane).put(IFD.SUB_IFD, subs[plane]);
-      int ifdSize = getIFDSize(ifds[0].get(plane));
-      long offsetPointer = outStream.getFilePointer() + ifdSize;
-      writer.writeIFD(ifds[0].get(plane), 0);
-      if (plane < planeCount - 1 || labelIFD != null || macroIFD != null) {
-        overwriteNextOffset(offsetPointer);
+    else {
+      long[][] subs = new long[planeCount][numberOfResolutions - 1];
+      for (int plane=0; plane<planeCount; plane++) {
+        for (int resolution=1; resolution<numberOfResolutions; resolution++) {
+          subs[plane][resolution - 1] = outStream.getFilePointer();
+          writeIFD(resolution, plane, resolution < numberOfResolutions - 1);
+        }
       }
-    }
-    if (labelIFD != null) {
-      int ifdSize = getIFDSize(labelIFD);
-      long offsetPointer = outStream.getFilePointer() + ifdSize;
-      writer.writeIFD(labelIFD, 0);
+      firstIFD = outStream.getFilePointer();
+      for (int plane=0; plane<planeCount; plane++) {
+        ifds[0].get(plane).put(IFD.SUB_IFD, subs[plane]);
+        writeIFD(0, plane,
+          plane < planeCount - 1 || labelIFD != null || macroIFD != null);
+      }
+      if (labelIFD != null) {
+        int ifdSize = getIFDSize(labelIFD);
+        long offsetPointer = outStream.getFilePointer() + ifdSize;
+        writer.writeIFD(labelIFD, 0);
+        if (macroIFD != null) {
+          overwriteNextOffset(offsetPointer);
+        }
+      }
       if (macroIFD != null) {
-        overwriteNextOffset(offsetPointer);
+        writer.writeIFD(macroIFD, 0);
       }
-    }
-    if (macroIFD != null) {
-      writer.writeIFD(macroIFD, 0);
     }
     outStream.seek(FIRST_IFD_OFFSET);
     outStream.writeLong(firstIFD);
@@ -923,11 +925,13 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
     ifd.put(IFD.TILE_BYTE_COUNTS, new long[tileCount]);
     ifd.put(IFD.TILE_OFFSETS, new long[tileCount]);
 
-    if (resolution == 0) {
-      ifd.put(IFD.SUB_IFD, (long) 0);
-    }
-    else {
-      ifd.put(IFD.NEW_SUBFILE_TYPE, 1);
+    if (!legacy) {
+      if (resolution == 0) {
+        ifd.put(IFD.SUB_IFD, (long) 0);
+      }
+      else {
+        ifd.put(IFD.NEW_SUBFILE_TYPE, 1);
+      }
     }
 
     return ifd;
@@ -1075,6 +1079,24 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
       return TiffCompression.DEFLATE;
     }
     return TiffCompression.UNCOMPRESSED;
+  }
+
+  /**
+   * Write the IFD for the given resolution and plane.
+   *
+   * @param resolution the resolution index
+   * @param plane the plane index
+   * @param overwrite true unless this is the last IFD in the list
+   */
+  private void writeIFD(int resolution, int plane, boolean overwrite)
+    throws FormatException, IOException
+  {
+    int ifdSize = getIFDSize(ifds[resolution].get(plane));
+    long offsetPointer = outStream.getFilePointer() + ifdSize;
+    writer.writeIFD(ifds[resolution].get(plane), 0);
+    if (overwrite) {
+      overwriteNextOffset(offsetPointer);
+    }
   }
 
 }
