@@ -6,7 +6,7 @@ plugins {
 }
 
 group = 'com.glencoesoftware'
-version = '0.1.0'
+version = '0.1.1-SNAPSHOT'
 
 mainClassName = 'com.glencoesoftware.pyramid.PyramidFromDirectoryWriter'
 sourceCompatibility = 1.8
