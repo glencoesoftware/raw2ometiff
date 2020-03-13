@@ -519,7 +519,10 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
           z = metadata.getPixelsSizeZ(0).getNumberValue().intValue();
           c = metadata.getPixelsSizeC(0).getNumberValue().intValue();
           t = metadata.getPixelsSizeT(0).getNumberValue().intValue();
+          rgbChannels = metadata.getChannelSamplesPerPixel(
+            0, 0).getNumberValue().intValue();
           planeCount = (z * c * t) / rgbChannels;
+          c /= rgbChannels;
           littleEndian = !metadata.getPixelsBigEndian(0);
         }
         else {
