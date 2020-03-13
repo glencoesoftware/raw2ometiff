@@ -763,7 +763,9 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
     if (legacy) {
       for (int resolution=0; resolution<numberOfResolutions; resolution++) {
         for (int plane=0; plane<planeCount; plane++) {
-          writeIFD(resolution, plane, true);
+          boolean last = (resolution == numberOfResolutions - 1) &&
+            (plane == planeCount -1);
+          writeIFD(resolution, plane, !last);
         }
       }
     }
