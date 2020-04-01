@@ -358,6 +358,11 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
     DataBlock block = n5Reader.readBlock(
       blockPath, n5Reader.getDatasetAttributes(blockPath),
       gridPosition);
+
+    if (block == null) {
+      throw new FormatException("Could not find block " + blockPath);
+    }
+
     ByteBuffer buffer = block.toByteBuffer();
     byte[] tile = new byte[xy * bpp * rgbChannels];
     boolean isPadded = buffer.limit() > tile.length;
@@ -400,11 +405,9 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
       descriptor.tileSizeY = attrs.getBlockSize()[1];
       rgbChannels = attrs.getBlockSize()[2];
       descriptor.numberOfTilesX =
-        (int) Math.ceil(
-            (double) attrs.getDimensions()[0] / descriptor.tileSizeX);
+        getTileCount(attrs.getDimensions()[0], descriptor.tileSizeX);
       descriptor.numberOfTilesY =
-        (int) Math.ceil(
-            (double) attrs.getDimensions()[1] / descriptor.tileSizeY);
+        getTileCount(attrs.getDimensions()[1], descriptor.tileSizeY);
 
       if (resolution == 0) {
         if (metadata.getImageCount() > 0) {
@@ -556,9 +559,13 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
       Object realY = originalMeta.get(levelKey + " | Y");
       if (realX != null) {
         descriptor.sizeX = DataTools.parseDouble(realX.toString()).intValue();
+        descriptor.numberOfTilesX =
+          getTileCount(descriptor.sizeX, descriptor.tileSizeX);
       }
       if (realY != null) {
         descriptor.sizeY = DataTools.parseDouble(realY.toString()).intValue();
+        descriptor.numberOfTilesY =
+          getTileCount(descriptor.sizeY, descriptor.tileSizeY);
       }
 
       if (descriptor.resolutionNumber == 0) {
@@ -647,6 +654,10 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
                 descriptor.tileSizeX, descriptor.sizeX - region.x);
               region.height = (int) Math.min(
                 descriptor.tileSizeY, descriptor.sizeY - region.y);
+
+              if (region.width <= 0 || region.height <= 0) {
+                continue;
+              }
 
               StopWatch t0 = new Slf4JStopWatch("getInputTileBytes");
               byte[] tileBytes;
@@ -1102,6 +1113,17 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
     if (overwrite) {
       overwriteNextOffset(offsetPointer);
     }
+  }
+
+  /**
+   * Calculate the number of tiles for a dimension based upon the tile size.
+   *
+   * @param size the number of pixels in the dimension (e.g. image width)
+   * @param tileSize the number of pixels in the tile along the same dimension
+   * @return the number of tiles
+   */
+  private int getTileCount(long size, long tileSize) {
+    return (int) Math.ceil((double) size / tileSize);
   }
 
 }
