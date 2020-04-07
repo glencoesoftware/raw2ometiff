@@ -355,7 +355,7 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
 
     String blockPath = "/" + resolution;
     long[] gridPosition = new long[] {x, y, no};
-    DataBlock block = n5Reader.readBlock(
+    DataBlock<?> block = n5Reader.readBlock(
       blockPath, n5Reader.getDatasetAttributes(blockPath),
       gridPosition);
 
@@ -454,7 +454,7 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
     interleaved = false;
     rgbChannels = 1;
     String blockPath = "/0";
-    DataBlock block = n5Reader.readBlock(blockPath,
+    DataBlock<?> block = n5Reader.readBlock(blockPath,
       n5Reader.getDatasetAttributes(blockPath), new long[] {0, 0, 0});
     littleEndian = block.toByteBuffer().order() == ByteOrder.LITTLE_ENDIAN;
     if (block instanceof ByteArrayDataBlock) {
