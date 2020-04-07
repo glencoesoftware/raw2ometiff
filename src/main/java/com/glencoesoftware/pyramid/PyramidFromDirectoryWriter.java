@@ -441,15 +441,6 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
   }
 
   /**
-   * @param resolution the resolution index
-   * @return total scale factor between the given resolution and the full
-   *         resolution image (resolution 0)
-   */
-  private double getScale(int resolution) {
-    return Math.pow(PYRAMID_SCALE, resolution);
-  }
-
-  /**
    * Populate number of channels, pixels types, endianess, etc.
    * based on the first tile
    * @throws IOException
