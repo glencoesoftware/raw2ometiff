@@ -553,21 +553,6 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
       LOG.info("Adding metadata for resolution: {}",
         descriptor.resolutionNumber);
 
-      String levelKey =
-        "Image #0 | Level sizes #" + descriptor.resolutionNumber;
-      Object realX = originalMeta.get(levelKey + " | X");
-      Object realY = originalMeta.get(levelKey + " | Y");
-      if (realX != null) {
-        descriptor.sizeX = DataTools.parseDouble(realX.toString()).intValue();
-        descriptor.numberOfTilesX =
-          getTileCount(descriptor.sizeX, descriptor.tileSizeX);
-      }
-      if (realY != null) {
-        descriptor.sizeY = DataTools.parseDouble(realY.toString()).intValue();
-        descriptor.numberOfTilesY =
-          getTileCount(descriptor.sizeY, descriptor.tileSizeY);
-      }
-
       if (descriptor.resolutionNumber == 0) {
         MetadataTools.populateMetadata(
           this.metadata, 0, null, this.littleEndian, "XYCZT",
