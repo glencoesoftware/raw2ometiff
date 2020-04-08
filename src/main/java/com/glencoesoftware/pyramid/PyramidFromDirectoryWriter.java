@@ -415,14 +415,14 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
           int sizeX = metadata.getPixelsSizeX(0).getNumberValue().intValue();
           int sizeY = metadata.getPixelsSizeY(0).getNumberValue().intValue();
           if (descriptor.sizeX != sizeX) {
-              throw new FormatException(String.format(
-                  "Resolution %d dimension mismatch! metadata=%d pyramid=%d",
-                  resolution, descriptor.sizeX, sizeX));
+            throw new FormatException(String.format(
+                "Resolution %d dimension mismatch! metadata=%d pyramid=%d",
+                resolution, descriptor.sizeX, sizeX));
           }
           if (descriptor.sizeY != sizeY) {
-              throw new FormatException(String.format(
-                  "Resolution %d dimension mismatch! metadata=%d pyramid=%d",
-                  resolution, descriptor.sizeY, sizeY));
+            throw new FormatException(String.format(
+                "Resolution %d dimension mismatch! metadata=%d pyramid=%d",
+                resolution, descriptor.sizeY, sizeY));
           }
         }
       }
