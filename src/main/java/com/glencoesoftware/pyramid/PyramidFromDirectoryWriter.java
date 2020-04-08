@@ -113,9 +113,6 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
 
   private static final long FIRST_IFD_OFFSET = 8;
 
-  /** Scaling factor between two adjacent resolutions. */
-  private static final int PYRAMID_SCALE = 2;
-
   /** Name of label image file. */
   private static final String LABEL_FILE = "LABELIMAGE.jpg";
 
@@ -401,31 +398,33 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
       descriptor.resolutionNumber = resolution;
 
       DatasetAttributes attrs = n5Reader.getDatasetAttributes("/" + resolution);
+      descriptor.sizeX = (int) attrs.getDimensions()[0];
+      descriptor.sizeY = (int) attrs.getDimensions()[1];
       descriptor.tileSizeX = attrs.getBlockSize()[0];
       descriptor.tileSizeY = attrs.getBlockSize()[1];
       rgbChannels = attrs.getBlockSize()[2];
       descriptor.numberOfTilesX =
-        getTileCount(attrs.getDimensions()[0], descriptor.tileSizeX);
+        getTileCount(descriptor.sizeX, descriptor.tileSizeX);
       descriptor.numberOfTilesY =
-        getTileCount(attrs.getDimensions()[1], descriptor.tileSizeY);
+        getTileCount(descriptor.sizeY, descriptor.tileSizeY);
 
       if (resolution == 0) {
+        // If we have image metadata available sanity the dimensions against
+        // those in the underlying N5 pyramid
         if (metadata.getImageCount() > 0) {
-          descriptor.sizeX =
-            metadata.getPixelsSizeX(0).getNumberValue().intValue();
-          descriptor.sizeY =
-            metadata.getPixelsSizeY(0).getNumberValue().intValue();
+          int sizeX = metadata.getPixelsSizeX(0).getNumberValue().intValue();
+          int sizeY = metadata.getPixelsSizeY(0).getNumberValue().intValue();
+          if (descriptor.sizeX != sizeX) {
+              throw new FormatException(String.format(
+                  "Resolution %d dimension mismatch! metadata=%d pyramid=%d",
+                  resolution, descriptor.sizeX, sizeX));
+          }
+          if (descriptor.sizeY != sizeY) {
+              throw new FormatException(String.format(
+                  "Resolution %d dimension mismatch! metadata=%d pyramid=%d",
+                  resolution, descriptor.sizeY, sizeY));
+          }
         }
-        else {
-          descriptor.sizeX = descriptor.tileSizeX * descriptor.numberOfTilesX;
-          descriptor.sizeY = descriptor.tileSizeY * descriptor.numberOfTilesY;
-        }
-      }
-      else {
-        descriptor.sizeX =
-          resolutions.get(resolution - 1).sizeX / PYRAMID_SCALE;
-        descriptor.sizeY =
-          resolutions.get(resolution - 1).sizeY / PYRAMID_SCALE;
       }
 
       resolutions.add(descriptor);
