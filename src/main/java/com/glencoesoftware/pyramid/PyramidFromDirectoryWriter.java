@@ -113,9 +113,6 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
 
   private static final long FIRST_IFD_OFFSET = 8;
 
-  /** Scaling factor between two adjacent resolutions. */
-  private static final int PYRAMID_SCALE = 2;
-
   /** Name of label image file. */
   private static final String LABEL_FILE = "LABELIMAGE.jpg";
 
@@ -355,9 +352,14 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
 
     String blockPath = "/" + resolution;
     long[] gridPosition = new long[] {x, y, no};
-    DataBlock block = n5Reader.readBlock(
+    DataBlock<?> block = n5Reader.readBlock(
       blockPath, n5Reader.getDatasetAttributes(blockPath),
       gridPosition);
+
+    if (block == null) {
+      throw new FormatException("Could not find block " + blockPath);
+    }
+
     ByteBuffer buffer = block.toByteBuffer();
     byte[] tile = new byte[xy * bpp * rgbChannels];
     boolean isPadded = buffer.limit() > tile.length;
@@ -396,33 +398,33 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
       descriptor.resolutionNumber = resolution;
 
       DatasetAttributes attrs = n5Reader.getDatasetAttributes("/" + resolution);
+      descriptor.sizeX = (int) attrs.getDimensions()[0];
+      descriptor.sizeY = (int) attrs.getDimensions()[1];
       descriptor.tileSizeX = attrs.getBlockSize()[0];
       descriptor.tileSizeY = attrs.getBlockSize()[1];
       rgbChannels = attrs.getBlockSize()[2];
       descriptor.numberOfTilesX =
-        (int) Math.ceil(
-            (double) attrs.getDimensions()[0] / descriptor.tileSizeX);
+        getTileCount(descriptor.sizeX, descriptor.tileSizeX);
       descriptor.numberOfTilesY =
-        (int) Math.ceil(
-            (double) attrs.getDimensions()[1] / descriptor.tileSizeY);
+        getTileCount(descriptor.sizeY, descriptor.tileSizeY);
 
       if (resolution == 0) {
+        // If we have image metadata available sanity the dimensions against
+        // those in the underlying N5 pyramid
         if (metadata.getImageCount() > 0) {
-          descriptor.sizeX =
-            metadata.getPixelsSizeX(0).getNumberValue().intValue();
-          descriptor.sizeY =
-            metadata.getPixelsSizeY(0).getNumberValue().intValue();
+          int sizeX = metadata.getPixelsSizeX(0).getNumberValue().intValue();
+          int sizeY = metadata.getPixelsSizeY(0).getNumberValue().intValue();
+          if (descriptor.sizeX != sizeX) {
+            throw new FormatException(String.format(
+                "Resolution %d dimension mismatch! metadata=%d pyramid=%d",
+                resolution, descriptor.sizeX, sizeX));
+          }
+          if (descriptor.sizeY != sizeY) {
+            throw new FormatException(String.format(
+                "Resolution %d dimension mismatch! metadata=%d pyramid=%d",
+                resolution, descriptor.sizeY, sizeY));
+          }
         }
-        else {
-          descriptor.sizeX = descriptor.tileSizeX * descriptor.numberOfTilesX;
-          descriptor.sizeY = descriptor.tileSizeY * descriptor.numberOfTilesY;
-        }
-      }
-      else {
-        descriptor.sizeX =
-          resolutions.get(resolution - 1).sizeX / PYRAMID_SCALE;
-        descriptor.sizeY =
-          resolutions.get(resolution - 1).sizeY / PYRAMID_SCALE;
       }
 
       resolutions.add(descriptor);
@@ -435,15 +437,6 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
    */
   private void findNumberOfResolutions() throws IOException {
     numberOfResolutions = n5Reader.list("/").length;
-  }
-
-  /**
-   * @param resolution the resolution index
-   * @return total scale factor between the given resolution and the full
-   *         resolution image (resolution 0)
-   */
-  private double getScale(int resolution) {
-    return Math.pow(PYRAMID_SCALE, resolution);
   }
 
   /**
@@ -460,7 +453,7 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
     interleaved = false;
     rgbChannels = 1;
     String blockPath = "/0";
-    DataBlock block = n5Reader.readBlock(blockPath,
+    DataBlock<?> block = n5Reader.readBlock(blockPath,
       n5Reader.getDatasetAttributes(blockPath), new long[] {0, 0, 0});
     littleEndian = block.toByteBuffer().order() == ByteOrder.LITTLE_ENDIAN;
     if (block instanceof ByteArrayDataBlock) {
@@ -550,17 +543,6 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
       LOG.info("Adding metadata for resolution: {}",
         descriptor.resolutionNumber);
 
-      String levelKey =
-        "Image #0 | Level sizes #" + descriptor.resolutionNumber;
-      Object realX = originalMeta.get(levelKey + " | X");
-      Object realY = originalMeta.get(levelKey + " | Y");
-      if (realX != null) {
-        descriptor.sizeX = DataTools.parseDouble(realX.toString()).intValue();
-      }
-      if (realY != null) {
-        descriptor.sizeY = DataTools.parseDouble(realY.toString()).intValue();
-      }
-
       if (descriptor.resolutionNumber == 0) {
         MetadataTools.populateMetadata(
           this.metadata, 0, null, this.littleEndian, "XYCZT",
@@ -647,6 +629,10 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
                 descriptor.tileSizeX, descriptor.sizeX - region.x);
               region.height = (int) Math.min(
                 descriptor.tileSizeY, descriptor.sizeY - region.y);
+
+              if (region.width <= 0 || region.height <= 0) {
+                continue;
+              }
 
               StopWatch t0 = new Slf4JStopWatch("getInputTileBytes");
               byte[] tileBytes;
@@ -1102,6 +1088,17 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
     if (overwrite) {
       overwriteNextOffset(offsetPointer);
     }
+  }
+
+  /**
+   * Calculate the number of tiles for a dimension based upon the tile size.
+   *
+   * @param size the number of pixels in the dimension (e.g. image width)
+   * @param tileSize the number of pixels in the tile along the same dimension
+   * @return the number of tiles
+   */
+  private int getTileCount(long size, long tileSize) {
+    return (int) Math.ceil((double) size / tileSize);
   }
 
 }
