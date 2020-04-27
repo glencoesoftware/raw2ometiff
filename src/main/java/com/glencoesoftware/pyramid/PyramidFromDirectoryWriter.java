@@ -328,7 +328,8 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
       gridPosition);
 
     if (block == null) {
-      throw new FormatException("Could not find block " + descriptor.path);
+      throw new FormatException("Could not find block = " + descriptor.path +
+        ", position = [" + pos[0] + ", " + pos[1] + ", " + pos[2] + "]");
     }
 
     ByteBuffer buffer = block.toByteBuffer();
@@ -395,6 +396,19 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
             throw new FormatException(String.format(
                 "Resolution %d dimension mismatch! metadata=%d pyramid=%d",
                 resolution, descriptor.sizeY, sizeY));
+          }
+        }
+
+        long[] lengths = attrs.getDimensions();
+        if (lengths.length != 5) {
+          throw new FormatException(String.format(
+            "Expected 5 dimensions in series %d, found %d",
+            s.index, lengths.length));
+        }
+        for (int i=2; i<lengths.length; i++) {
+          if ((int) lengths[i] != s.dimensionLengths[i - 2]) {
+            throw new FormatException(
+              "Dimension order mismatch in series " + s.index);
           }
         }
       }
