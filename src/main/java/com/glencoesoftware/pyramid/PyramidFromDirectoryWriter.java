@@ -434,6 +434,9 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
    */
   private void findNumberOfResolutions(PyramidSeries s) throws IOException {
     s.path = "/" + s.index;
+    if (!n5Reader.exists(s.path)) {
+      throw new IOException("Expected series " + s.index + " not found");
+    }
     s.numberOfResolutions = n5Reader.list(s.path).length;
   }
 
