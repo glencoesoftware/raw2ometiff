@@ -515,6 +515,17 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
       s.pixelType = FormatTools.pixelTypeFromString(
             metadata.getPixelsType(seriesIndex).getValue());
 
+      if (seriesIndex > 0 && s.littleEndian != series.get(0).littleEndian) {
+        // always warn on endian mismatches
+        // mismatch is only fatal if pixel type is neither INT8 nor UINT8
+        String msg = String.format("Endian mismatch in series {} (expected {}",
+          seriesIndex, series.get(0).littleEndian);
+        if (FormatTools.getBytesPerPixel(s.pixelType) > 1) {
+          throw new FormatException(msg);
+        }
+        LOG.warn(msg);
+      }
+
       s.dimensionLengths[s.dimensionOrder.indexOf("Z") - 2] = s.z;
       s.dimensionLengths[s.dimensionOrder.indexOf("T") - 2] = s.t;
 
@@ -581,7 +592,8 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
     outStream = new RandomAccessOutputStream(outputFilePath.toString());
     writer = new TiffSaver(outStream, outputFilePath.toString());
     writer.setBigTiff(true);
-    // TODO: assumes all series have same endian setting
+    // assumes all series have same endian setting
+    // series with opposite endianness are logged above
     writer.setLittleEndian(series.get(0).littleEndian);
     writer.writeHeader();
   }
