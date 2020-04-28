@@ -927,8 +927,13 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
     IFD ifd = ifds[resolution].get(imageNumber);
     TiffCompression tiffCompression = getTIFFCompression();
     CodecOptions options = tiffCompression.getCompressionCodecOptions(ifd);
+
+    // buffer has been padded to full tile width before calling writeTile
+    // but is not necessarily full tile height (if in the bottom row)
+    int bpp = FormatTools.getBytesPerPixel(pixelType);
     options.width = (int) ifd.getTileWidth();
-    options.height = (int) ifd.getTileLength();
+    options.height = buffer.length / (options.width * bpp);
+    options.bitsPerSample = bpp * 8;
     options.channels = 1;
 
     byte[] realTile = tiffCompression.compress(buffer, options);
