@@ -225,6 +225,12 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
 
   private N5FSReader n5Reader = null;
 
+  /**
+   * Total plane count across all series, excluding resolutions.
+   * Used to populate TiffData.
+   */
+  private int totalPlanes = 0;
+
   /** Writer metadata. */
   OMEPyramidStore metadata;
 
@@ -760,6 +766,8 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
           s.index < series.size() - 1 || plane < s.planeCount - 1);
       }
     }
+    totalPlanes += s.planeCount;
+
     outStream.seek(FIRST_IFD_OFFSET);
     outStream.writeLong(firstIFD);
   }
@@ -835,10 +843,10 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
 
     if (resolution == 0 && plane == 0) {
       try {
-        // TODO : fix IFD indexes for s.index > 0
-        metadata.setTiffDataIFD(new NonNegativeInteger(0), s.index, 0);
+        metadata.setTiffDataIFD(
+          new NonNegativeInteger(totalPlanes), s.index, 0);
         metadata.setTiffDataPlaneCount(
-            new NonNegativeInteger(s.planeCount), s.index, 0);
+          new NonNegativeInteger(s.planeCount), s.index, 0);
 
         OMEXMLService service = getService();
         String omexml = service.getOMEXML(metadata);
