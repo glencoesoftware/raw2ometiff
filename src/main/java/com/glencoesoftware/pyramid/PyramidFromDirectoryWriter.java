@@ -896,7 +896,7 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
 
     // buffer has been padded to full tile width before calling writeTile
     // but is not necessarily full tile height (if in the bottom row)
-    int bpp = FormatTools.getBytesPerPixel(pixelType);
+    int bpp = FormatTools.getBytesPerPixel(s.pixelType);
     options.width = (int) ifd.getTileWidth();
     options.height = buffer.length / (options.width * bpp);
     options.bitsPerSample = bpp * 8;
