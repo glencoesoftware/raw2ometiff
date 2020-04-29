@@ -182,7 +182,7 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
     /** Number of resolutions. */
     int numberOfResolutions;
 
-    boolean littleEndian;
+    boolean littleEndian = false;
 
     int planeCount = 1;
     int z = 1;
@@ -517,7 +517,13 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
       s.dimensionOrder =
         metadata.getPixelsDimensionOrder(seriesIndex).toString();
       s.planeCount = s.z * s.t;
-      s.littleEndian = !metadata.getPixelsBigEndian(seriesIndex);
+
+      // N5 format only allows big endian data
+      // Zarr format allows both
+      if (n5Reader instanceof N5ZarrReader) {
+        s.littleEndian = !metadata.getPixelsBigEndian(seriesIndex);
+      }
+
       s.pixelType = FormatTools.pixelTypeFromString(
             metadata.getPixelsType(seriesIndex).getValue());
 
