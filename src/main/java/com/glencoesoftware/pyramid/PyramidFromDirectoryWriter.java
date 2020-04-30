@@ -36,17 +36,10 @@ import loci.common.Region;
 import loci.common.services.DependencyException;
 import loci.common.services.ServiceException;
 import loci.common.services.ServiceFactory;
-import loci.formats.ClassList;
 import loci.formats.FormatException;
 import loci.formats.FormatTools;
-import loci.formats.IFormatReader;
-import loci.formats.ImageReader;
 import loci.formats.MetadataTools;
 import loci.formats.codec.CodecOptions;
-import loci.formats.in.APNGReader;
-import loci.formats.in.BMPReader;
-import loci.formats.in.JPEGReader;
-import loci.formats.in.MinimalTiffReader;
 import loci.formats.ome.OMEPyramidStore;
 import loci.formats.out.TiffWriter;
 import loci.formats.services.OMEXMLService;
@@ -109,12 +102,6 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
 
   private static final long FIRST_IFD_OFFSET = 8;
 
-  /** Name of label image file. */
-  private static final String LABEL_FILE = "LABELIMAGE.jpg";
-
-  /** Name of macro image file. */
-  private static final String MACRO_FILE = "MACROIMAGE.jpg";
-
   /** Name of JSON metadata file. */
   private static final String METADATA_FILE = "METADATA.json";
 
@@ -130,7 +117,6 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
 
   private BlockingQueue<Runnable> tileQueue;
   private ExecutorService executor;
-  private IFDList[] ifds;
 
   /** Where to write? */
   @Parameters(
@@ -180,26 +166,40 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
   )
   boolean rgb = false;
 
-  /** FormatTools pixel type. */
-  Integer pixelType;
+  private List<PyramidSeries> series = new ArrayList<PyramidSeries>();
 
-  /** Writer metadata. */
-  OMEPyramidStore metadata;
+  private class PyramidSeries {
+    /** Path to series in N5/Zarr. */
+    String path;
 
-  /** Number of resolutions. */
-  int numberOfResolutions;
+    int index = -1;
 
-  boolean littleEndian;
+    IFDList[] ifds;
 
-  int planeCount = 1;
-  int z = 1;
-  int c = 1;
-  int t = 1;
+    /** FormatTools pixel type. */
+    Integer pixelType;
 
-  /** Description of each resolution in the pyramid. */
-  List<ResolutionDescriptor> resolutions;
+    /** Number of resolutions. */
+    int numberOfResolutions;
+
+    boolean littleEndian = false;
+
+    int planeCount = 1;
+    int z = 1;
+    int c = 1;
+    int t = 1;
+    String dimensionOrder;
+    int[] dimensionLengths = new int[3];
+
+    boolean rgb = false;
+
+    /** Description of each resolution in the pyramid. */
+    List<ResolutionDescriptor> resolutions;
+  }
 
   private class ResolutionDescriptor {
+    /** Path to resolution in N5/Zarr. */
+    String path;
 
     /** Resolution index (0 = the original image). */
     Integer resolutionNumber;
@@ -223,27 +223,22 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
     Integer numberOfTilesY;
   }
 
-  /** Reader used for opening tile files. */
-  private IFormatReader helperReader = null;
-
   private N5FSReader n5Reader = null;
+
+  /**
+   * Total plane count across all series, excluding resolutions.
+   * Used to populate TiffData.
+   */
+  private int totalPlanes = 0;
+
+  /** Writer metadata. */
+  OMEPyramidStore metadata;
 
   /**
    * Construct a writer for performing the pyramid conversion.
    */
   public PyramidFromDirectoryWriter() {
-    // specify a minimal list of readers to speed up tile reading
-    ClassList<IFormatReader> validReaders =
-      new ClassList<IFormatReader>(IFormatReader.class);
-    validReaders.addClass(BMPReader.class);
-    validReaders.addClass(MinimalTiffReader.class);
-    validReaders.addClass(JPEGReader.class);
-    validReaders.addClass(APNGReader.class);
-    helperReader = new ImageReader(validReaders);
-
     tileQueue = new LimitedQueue<Runnable>(maxWorkers);
-    executor = new ThreadPoolExecutor(
-      maxWorkers, maxWorkers, 0L, TimeUnit.MILLISECONDS, tileQueue);
   }
 
   /**
@@ -290,24 +285,6 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
   //* Initialization */
 
   /**
-   * Get the label image file, which may or may not exist.
-   *
-   * @return Path representing the expected label image file
-   */
-  private Path getLabelFile() {
-    return inputDirectory.resolve(LABEL_FILE);
-  }
-
-  /**
-   * Get the macro image file, which may or may not exist.
-   *
-   * @return Path representing the expected macro image file
-   */
-  private Path getMacroFile() {
-    return inputDirectory.resolve(MACRO_FILE);
-  }
-
-  /**
    * Get the JSON metadata file, which may or may not exist.
    *
    * @return Path representing the expected JSON metadata file
@@ -328,6 +305,7 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
   /**
    * Provide tile from the input folder.
    *
+   * @param s current series
    * @param resolution the pyramid level, indexed from 0 (largest)
    * @param no the plane index
    * @param x the tile X index, from 0 to numberOfTilesX
@@ -336,26 +314,28 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
                    if null, the whole tile is read
    * @return byte array containing the pixels for the tile
    */
-  private byte[] getInputTileBytes(int resolution,
+  private byte[] getInputTileBytes(PyramidSeries s, int resolution,
       int no, int x, int y, Region region)
       throws FormatException, IOException
   {
-    ResolutionDescriptor descriptor = resolutions.get(resolution);
-    int bpp = FormatTools.getBytesPerPixel(pixelType);
+    ResolutionDescriptor descriptor = s.resolutions.get(resolution);
+    int bpp = FormatTools.getBytesPerPixel(s.pixelType);
     int xy = descriptor.tileSizeX * descriptor.tileSizeY;
     if (region != null) {
       xy = region.width * region.height;
     }
     int tileSize = xy * bpp;
     byte[] tile = new byte[tileSize];
-    String blockPath = "/" + resolution;
-    long[] gridPosition = new long[] {x, y, no};
+
+    int[] pos = FormatTools.rasterToPosition(s.dimensionLengths, no);
+    long[] gridPosition = new long[] {x, y, pos[0], pos[1], pos[2]};
     DataBlock<?> block = n5Reader.readBlock(
-      blockPath, n5Reader.getDatasetAttributes(blockPath),
+      descriptor.path, n5Reader.getDatasetAttributes(descriptor.path),
       gridPosition);
 
     if (block == null) {
-      throw new FormatException("Could not find block " + blockPath);
+      throw new FormatException("Could not find block = " + descriptor.path +
+        ", position = [" + pos[0] + ", " + pos[1] + ", " + pos[2] + "]");
     }
 
     ByteBuffer buffer = block.toByteBuffer();
@@ -382,15 +362,20 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
   /**
    * Calculate image width and height for each resolution.
    * Uses the first tile in the resolution to find the tile size.
+   *
+   * @param s current series
    */
-  public void describePyramid() throws FormatException, IOException {
-    LOG.info("Number of resolution levels: {}", numberOfResolutions);
-    resolutions = new ArrayList<ResolutionDescriptor>();
-    for (int resolution = 0; resolution < numberOfResolutions; resolution++) {
+  public void describePyramid(PyramidSeries s)
+    throws FormatException, IOException
+  {
+    LOG.info("Number of resolution levels: {}", s.numberOfResolutions);
+    s.resolutions = new ArrayList<ResolutionDescriptor>();
+    for (int resolution = 0; resolution < s.numberOfResolutions; resolution++) {
       ResolutionDescriptor descriptor = new ResolutionDescriptor();
       descriptor.resolutionNumber = resolution;
+      descriptor.path = s.path + "/" + resolution;
 
-      DatasetAttributes attrs = n5Reader.getDatasetAttributes("/" + resolution);
+      DatasetAttributes attrs = n5Reader.getDatasetAttributes(descriptor.path);
       descriptor.sizeX = (int) attrs.getDimensions()[0];
       descriptor.sizeY = (int) attrs.getDimensions()[1];
       descriptor.tileSizeX = attrs.getBlockSize()[0];
@@ -401,11 +386,13 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
         getTileCount(descriptor.sizeY, descriptor.tileSizeY);
 
       if (resolution == 0) {
-        // If we have image metadata available sanity the dimensions against
-        // those in the underlying N5 pyramid
+        // If we have image metadata available sanity check the dimensions
+        // against those in the underlying N5 pyramid
         if (metadata.getImageCount() > 0) {
-          int sizeX = metadata.getPixelsSizeX(0).getNumberValue().intValue();
-          int sizeY = metadata.getPixelsSizeY(0).getNumberValue().intValue();
+          int sizeX =
+            metadata.getPixelsSizeX(s.index).getNumberValue().intValue();
+          int sizeY =
+            metadata.getPixelsSizeY(s.index).getNumberValue().intValue();
           if (descriptor.sizeX != sizeX) {
             throw new FormatException(String.format(
                 "Resolution %d dimension mismatch! metadata=%d pyramid=%d",
@@ -417,18 +404,46 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
                 resolution, descriptor.sizeY, sizeY));
           }
         }
+
+        long[] lengths = attrs.getDimensions();
+        if (lengths.length != 5) {
+          throw new FormatException(String.format(
+            "Expected 5 dimensions in series %d, found %d",
+            s.index, lengths.length));
+        }
+        for (int i=2; i<lengths.length; i++) {
+          if ((int) lengths[i] != s.dimensionLengths[i - 2]) {
+            throw new FormatException(
+              "Dimension order mismatch in series " + s.index);
+          }
+        }
       }
 
-      resolutions.add(descriptor);
+      s.resolutions.add(descriptor);
     }
   }
 
   /**
-   * Calculate the number of resolutions based upon the number
-   * of directories in the base input directory.
+   * Calculate the number of series.
+   *
+   * @return number of series
    */
-  private void findNumberOfResolutions() throws IOException {
-    numberOfResolutions = n5Reader.list("/").length;
+  private int getSeriesCount() throws IOException {
+    return n5Reader.list("/").length;
+  }
+
+  /**
+   * Calculate the number of resolutions for the given series based upon
+   * the number of directories in the base input directory.
+   *
+   * @param s current series
+   */
+  private void findNumberOfResolutions(PyramidSeries s) throws IOException {
+    s.path = "/" + s.index;
+    if (!n5Reader.exists(s.path)) {
+      throw new IOException("Expected series " + s.index + " not found");
+    }
+    s.numberOfResolutions = n5Reader.list(s.path).length;
   }
 
   /**
@@ -438,11 +453,11 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
   public void initialize()
     throws FormatException, IOException, DependencyException
   {
-    Path zarr = inputDirectory.resolve("pyramid.zarr");
+    Path zarr = inputDirectory.resolve("data.zarr");
     if (Files.exists(zarr)) {
       n5Reader = new N5ZarrReader(zarr.toString());
     }
-    Path n5 = inputDirectory.resolve("pyramid.n5");
+    Path n5 = inputDirectory.resolve("data.n5");
     if (Files.exists(n5)) {
       n5Reader = new N5FSReader(n5.toString());
     }
@@ -452,7 +467,6 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
     }
 
     LOG.info("Creating tiled pyramid file {}", this.outputFilePath);
-    findNumberOfResolutions();
 
     OMEXMLService service = getService();
     Hashtable<String, Object> originalMeta = new Hashtable<String, Object>();
@@ -466,30 +480,13 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
         if (xml != null) {
           metadata = (OMEPyramidStore) service.createOMEXMLMetadata(xml);
 
-          z = metadata.getPixelsSizeZ(0).getNumberValue().intValue();
-          c = metadata.getPixelsSizeC(0).getNumberValue().intValue();
-          t = metadata.getPixelsSizeT(0).getNumberValue().intValue();
-          planeCount = z * t;
-          littleEndian = !metadata.getPixelsBigEndian(0);
-          pixelType = FormatTools.pixelTypeFromString(
-            metadata.getPixelsType(0).getValue());
-
-          rgb = rgb && (c == 3) && (z * t == 1);
-          if (!rgb) {
-            planeCount *= c;
-          }
-
           OMEXMLMetadataRoot root = (OMEXMLMetadataRoot) metadata.getRoot();
           for (int image = 0; image<root.sizeOfImageList(); image++) {
             Pixels pixels = root.getImage(image).getPixels();
             pixels.setMetadataOnly(null);
-            if (rgb) {
-              while (pixels.sizeOfChannelList() > 1) {
-                Channel ch = pixels.getChannel(pixels.sizeOfChannelList() - 1);
-                pixels.removeChannel(ch);
-              }
-              Channel onlyChannel = pixels.getChannel(0);
-              onlyChannel.setSamplesPerPixel(new PositiveInteger(c));
+
+            while (pixels.sizeOfTiffDataList() > 0) {
+              pixels.removeTiffData(pixels.getTiffData(0));
             }
           }
         }
@@ -502,6 +499,98 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
       }
     }
 
+    int seriesCount = getSeriesCount();
+
+    if (seriesCount > 1 && legacy) {
+      LOG.warn("Omitting {} series due to legacy output", seriesCount - 1);
+      seriesCount = 1;
+    }
+
+    for (int seriesIndex=0; seriesIndex<seriesCount; seriesIndex++) {
+      PyramidSeries s = new PyramidSeries();
+      s.index = seriesIndex;
+      findNumberOfResolutions(s);
+
+      s.z = metadata.getPixelsSizeZ(seriesIndex).getNumberValue().intValue();
+      s.c = metadata.getPixelsSizeC(seriesIndex).getNumberValue().intValue();
+      s.t = metadata.getPixelsSizeT(seriesIndex).getNumberValue().intValue();
+      s.dimensionOrder =
+        metadata.getPixelsDimensionOrder(seriesIndex).toString();
+      s.planeCount = s.z * s.t;
+
+      // N5 format only allows big endian data
+      // Zarr format allows both
+      if (n5Reader instanceof N5ZarrReader) {
+        s.littleEndian = !metadata.getPixelsBigEndian(seriesIndex);
+      }
+
+      s.pixelType = FormatTools.pixelTypeFromString(
+            metadata.getPixelsType(seriesIndex).getValue());
+
+      if (seriesIndex > 0 && s.littleEndian != series.get(0).littleEndian) {
+        // always warn on endian mismatches
+        // mismatch is only fatal if pixel type is neither INT8 nor UINT8
+        String msg = String.format("Endian mismatch in series {} (expected {}",
+          seriesIndex, series.get(0).littleEndian);
+        if (FormatTools.getBytesPerPixel(s.pixelType) > 1) {
+          throw new FormatException(msg);
+        }
+        LOG.warn(msg);
+      }
+
+      s.dimensionLengths[s.dimensionOrder.indexOf("Z") - 2] = s.z;
+      s.dimensionLengths[s.dimensionOrder.indexOf("T") - 2] = s.t;
+
+      s.rgb = rgb && (s.c == 3) && (s.z * s.t == 1);
+      if (!s.rgb) {
+        s.planeCount *= s.c;
+        s.dimensionLengths[s.dimensionOrder.indexOf("C") - 2] = s.c;
+      }
+      else {
+        s.dimensionLengths[s.dimensionOrder.indexOf("C") - 2] = 1;
+
+        OMEXMLMetadataRoot root = (OMEXMLMetadataRoot) metadata.getRoot();
+        Pixels pixels = root.getImage(seriesIndex).getPixels();
+        while (pixels.sizeOfChannelList() > 1) {
+          Channel ch = pixels.getChannel(pixels.sizeOfChannelList() - 1);
+          pixels.removeChannel(ch);
+        }
+        Channel onlyChannel = pixels.getChannel(0);
+        onlyChannel.setSamplesPerPixel(new PositiveInteger(s.c));
+      }
+
+      describePyramid(s);
+
+      for (ResolutionDescriptor descriptor : s.resolutions) {
+        LOG.info("Adding metadata for resolution: {}",
+          descriptor.resolutionNumber);
+
+        if (descriptor.resolutionNumber == 0) {
+          MetadataTools.populateMetadata(
+            this.metadata, seriesIndex, null, s.littleEndian, s.dimensionOrder,
+            FormatTools.getPixelTypeString(s.pixelType),
+            descriptor.sizeX, descriptor.sizeY, s.z, s.c, s.t, s.rgb ? s.c : 1);
+        }
+        else {
+          if (legacy) {
+            MetadataTools.populateMetadata(this.metadata,
+              descriptor.resolutionNumber, null, s.littleEndian,
+              s.dimensionOrder, FormatTools.getPixelTypeString(s.pixelType),
+              descriptor.sizeX, descriptor.sizeY,
+              s.z, s.c, s.t, s.rgb ? s.c : 1);
+          }
+          else {
+            metadata.setResolutionSizeX(new PositiveInteger(
+              descriptor.sizeX), seriesIndex, descriptor.resolutionNumber);
+            metadata.setResolutionSizeY(new PositiveInteger(
+              descriptor.sizeY), seriesIndex, descriptor.resolutionNumber);
+          }
+        }
+      }
+
+      series.add(s);
+    }
+
     Path metadataFile = getMetadataFile();
     if (metadataFile != null && Files.exists(metadataFile)) {
       String jsonMetadata = DataTools.readFile(metadataFile.toString());
@@ -512,40 +601,12 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
       service.populateOriginalMetadata(metadata, originalMeta);
     }
 
-    describePyramid();
-
-    for (ResolutionDescriptor descriptor : resolutions) {
-      LOG.info("Adding metadata for resolution: {}",
-        descriptor.resolutionNumber);
-
-      if (descriptor.resolutionNumber == 0) {
-        MetadataTools.populateMetadata(
-          this.metadata, 0, null, this.littleEndian, "XYCZT",
-          FormatTools.getPixelTypeString(this.pixelType),
-          descriptor.sizeX, descriptor.sizeY, z, c, t, rgb ? c : 1);
-      }
-      else {
-        if (legacy) {
-          MetadataTools.populateMetadata(this.metadata,
-            descriptor.resolutionNumber, null, this.littleEndian,
-            "XYCZT", FormatTools.getPixelTypeString(pixelType),
-            descriptor.sizeX, descriptor.sizeY, z, c, t, rgb ? c : 1);
-        }
-        else {
-          metadata.setResolutionSizeX(new PositiveInteger(
-            descriptor.sizeX), 0, descriptor.resolutionNumber);
-          metadata.setResolutionSizeY(new PositiveInteger(
-            descriptor.sizeY), 0, descriptor.resolutionNumber);
-        }
-      }
-    }
-
-    attachExtraImageMetadata();
-
     outStream = new RandomAccessOutputStream(outputFilePath.toString());
     writer = new TiffSaver(outStream, outputFilePath.toString());
     writer.setBigTiff(true);
-    writer.setLittleEndian(littleEndian);
+    // assumes all series have same endian setting
+    // series with opposite endianness are logged above
+    writer.setLittleEndian(series.get(0).littleEndian);
     writer.writeHeader();
   }
 
@@ -576,24 +637,38 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
     throws FormatException, IOException,
       InterruptedException, DependencyException
   {
+    for (PyramidSeries s : series) {
+      executor = new ThreadPoolExecutor(
+        maxWorkers, maxWorkers, 0L, TimeUnit.MILLISECONDS, tileQueue);
+      convertPyramid(s);
+    }
+
+    this.writer.close();
+    outStream.close();
+  }
+
+  private void convertPyramid(PyramidSeries s)
+    throws FormatException, IOException,
+      InterruptedException, DependencyException
+  {
     // convert every resolution in the pyramid
-    ifds = new IFDList[numberOfResolutions];
-    for (int resolution=0; resolution<numberOfResolutions; resolution++) {
-      ifds[resolution] = new IFDList();
-      for (int plane=0; plane<planeCount; plane++) {
-        IFD ifd = makeIFD(resolution, plane);
-        ifds[resolution].add(ifd);
+    s.ifds = new IFDList[s.numberOfResolutions];
+    for (int resolution=0; resolution<s.numberOfResolutions; resolution++) {
+      s.ifds[resolution] = new IFDList();
+      for (int plane=0; plane<s.planeCount; plane++) {
+        IFD ifd = makeIFD(s, resolution, plane);
+        s.ifds[resolution].add(ifd);
       }
     }
 
-    int rgbChannels = rgb ? c : 1;
+    int rgbChannels = s.rgb ? s.c : 1;
 
     try {
-      for (int resolution=0; resolution<numberOfResolutions; resolution++) {
+      for (int resolution=0; resolution<s.numberOfResolutions; resolution++) {
         LOG.info("Converting resolution #{}", resolution);
-        ResolutionDescriptor descriptor = resolutions.get(resolution);
+        ResolutionDescriptor descriptor = s.resolutions.get(resolution);
         int tileCount = descriptor.numberOfTilesY * descriptor.numberOfTilesX;
-        for (int plane=0; plane<planeCount; plane++) {
+        for (int plane=0; plane<s.planeCount; plane++) {
           int tileIndex = 0;
           // if the resolution has already been calculated,
           // just read each tile from disk and store in the OME-TIFF
@@ -617,7 +692,7 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
                 try {
                   int planeIndex = plane * rgbChannels + ch;
                   tileBytes =
-                    getInputTileBytes(resolution, planeIndex, x, y, region);
+                    getInputTileBytes(s, resolution, planeIndex, x, y, region);
                 }
                 finally {
                   t0.stop();
@@ -631,7 +706,7 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
                   try {
                     if (tileBytes != null) {
                       if (region.width == descriptor.tileSizeX) {
-                        writeTile(currentPlane, tileBytes,
+                        writeTile(s, currentPlane, tileBytes,
                           currentIndex, currentResolution);
                       }
                       else {
@@ -646,14 +721,14 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
                           System.arraycopy(tileBytes, row * inRowLen,
                             realTile, row * outRowLen, inRowLen);
                         }
-                        writeTile(currentPlane, realTile,
+                        writeTile(s, currentPlane, realTile,
                           currentIndex, currentResolution);
                       }
                     }
                   }
                   catch (FormatException|IOException e) {
-                    LOG.error("Failed to write tile in resolution {}",
-                      currentResolution, e);
+                    LOG.error("Failed to write tile in series {} resolution {}",
+                      s.index, currentResolution, e);
                   }
                   finally {
                     t1.stop();
@@ -670,103 +745,37 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
       executor.awaitTermination(Long.MAX_VALUE, TimeUnit.NANOSECONDS);
     }
 
-    IFD labelIFD = null;
-    IFD macroIFD = null;
-
-    if (!legacy) {
-      // add the label image, if present
-      Path label = getLabelFile();
-      if (label != null && Files.exists(label)) {
-        try {
-          helperReader.setId(label.toString());
-          labelIFD = makeIFD(helperReader);
-
-          byte[] bytes = helperReader.openBytes(0);
-          int channelBytes = bytes.length / helperReader.getRGBChannelCount();
-          long[] offsets = labelIFD.getStripOffsets();
-          long[] counts = labelIFD.getStripByteCounts();
-          for (int s=0; s<offsets.length; s++) {
-            offsets[s] = outStream.getFilePointer() + s * channelBytes;
-            counts[s] = channelBytes;
-          }
-
-          labelIFD.put(IFD.STRIP_OFFSETS, offsets);
-          labelIFD.put(IFD.STRIP_BYTE_COUNTS, counts);
-          outStream.write(bytes);
-        }
-        finally {
-          helperReader.close();
-        }
-      }
-
-      // add the macro image, if present
-      Path macro = getMacroFile();
-      if (macro != null && Files.exists(macro)) {
-        try {
-          helperReader.setId(macro.toString());
-          macroIFD = makeIFD(helperReader);
-
-          byte[] bytes = helperReader.openBytes(0);
-          int channelBytes = bytes.length / helperReader.getRGBChannelCount();
-          long[] offsets = macroIFD.getStripOffsets();
-          long[] counts = macroIFD.getStripByteCounts();
-          for (int s=0; s<offsets.length; s++) {
-            offsets[s] = outStream.getFilePointer() + s * channelBytes;
-            counts[s] = channelBytes;
-          }
-
-          macroIFD.put(IFD.STRIP_OFFSETS, offsets);
-          macroIFD.put(IFD.STRIP_BYTE_COUNTS, counts);
-          outStream.write(bytes);
-        }
-        finally {
-          helperReader.close();
-        }
-      }
-    }
-
     long firstIFD = outStream.getFilePointer();
 
     if (legacy) {
-      for (int resolution=0; resolution<numberOfResolutions; resolution++) {
-        for (int plane=0; plane<planeCount; plane++) {
-          boolean last = (resolution == numberOfResolutions - 1) &&
-            (plane == planeCount -1);
-          writeIFD(resolution, plane, !last);
+      for (int resolution=0; resolution<s.numberOfResolutions; resolution++) {
+        for (int plane=0; plane<s.planeCount; plane++) {
+          boolean last = (resolution == s.numberOfResolutions - 1) &&
+            (plane == s.planeCount - 1);
+          writeIFD(s, resolution, plane, !last);
         }
       }
     }
     else {
-      long[][] subs = new long[planeCount][numberOfResolutions - 1];
-      for (int plane=0; plane<planeCount; plane++) {
-        for (int resolution=1; resolution<numberOfResolutions; resolution++) {
+      long[][] subs = new long[s.planeCount][s.numberOfResolutions - 1];
+      for (int plane=0; plane<s.planeCount; plane++) {
+        for (int resolution=1; resolution<s.numberOfResolutions; resolution++) {
           subs[plane][resolution - 1] = outStream.getFilePointer();
-          writeIFD(resolution, plane, resolution < numberOfResolutions - 1);
+          writeIFD(
+            s, resolution, plane, resolution < s.numberOfResolutions - 1);
         }
       }
       firstIFD = outStream.getFilePointer();
-      for (int plane=0; plane<planeCount; plane++) {
-        ifds[0].get(plane).put(IFD.SUB_IFD, subs[plane]);
-        writeIFD(0, plane,
-          plane < planeCount - 1 || labelIFD != null || macroIFD != null);
-      }
-      if (labelIFD != null) {
-        int ifdSize = getIFDSize(labelIFD);
-        long offsetPointer = outStream.getFilePointer() + ifdSize;
-        writer.writeIFD(labelIFD, 0);
-        if (macroIFD != null) {
-          overwriteNextOffset(offsetPointer);
-        }
-      }
-      if (macroIFD != null) {
-        writer.writeIFD(macroIFD, 0);
+      for (int plane=0; plane<s.planeCount; plane++) {
+        s.ifds[0].get(plane).put(IFD.SUB_IFD, subs[plane]);
+        writeIFD(s, 0, plane,
+          s.index < series.size() - 1 || plane < s.planeCount - 1);
       }
     }
+    totalPlanes += s.planeCount;
+
     outStream.seek(FIRST_IFD_OFFSET);
     outStream.writeLong(firstIFD);
-
-    this.writer.close();
-    outStream.close();
   }
 
   /**
@@ -799,70 +808,36 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
   }
 
   /**
-   * Create an IFD using the given reader's current state.
-   * All relevant tags are filled in; strip data is filled with placeholders.
-   * This should only be used for extra images as it assumes that pixel
-   * data is stored in a single strip instead of tiles.
-   *
-   * @param reader the initialized image reader that supplies metadata
-   * @return an IFD that is ready to be filled with strip data
-   */
-  private IFD makeIFD(IFormatReader reader) {
-    IFD ifd = new IFD();
-    ifd.put(IFD.LITTLE_ENDIAN, reader.isLittleEndian());
-    ifd.put(IFD.IMAGE_WIDTH, (long) reader.getSizeX());
-    ifd.put(IFD.IMAGE_LENGTH, (long) reader.getSizeY());
-    ifd.put(IFD.ROWS_PER_STRIP, reader.getSizeY());
-    ifd.put(IFD.PLANAR_CONFIGURATION,
-      reader.isInterleaved() || reader.getRGBChannelCount() == 1 ? 1 : 2);
-    ifd.put(IFD.SAMPLE_FORMAT, 1);
-
-    int[] bps = new int[1];
-    Arrays.fill(bps, FormatTools.getBytesPerPixel(reader.getPixelType()) * 8);
-    ifd.put(IFD.BITS_PER_SAMPLE, bps);
-
-    ifd.put(IFD.SAMPLES_PER_PIXEL, reader.getRGBChannelCount());
-    ifd.put(IFD.PHOTOMETRIC_INTERPRETATION,
-      reader.getRGBChannelCount() == 1 ?
-      PhotoInterp.BLACK_IS_ZERO.getCode() : PhotoInterp.RGB.getCode());
-
-    ifd.put(IFD.SOFTWARE, FormatTools.CREATOR);
-    ifd.put(IFD.STRIP_BYTE_COUNTS, new long[reader.getRGBChannelCount()]);
-    ifd.put(IFD.STRIP_OFFSETS, new long[reader.getRGBChannelCount()]);
-    ifd.put(IFD.COMPRESSION, TiffCompression.UNCOMPRESSED.getCode());
-    return ifd;
-  }
-
-  /**
    * Create an IFD for the given plane in the given resolution.
    * All relevant tags are filled in; sub-IFD and tile data are
    * filled with placeholders.
    *
+   * @param s current series
    * @param resolution the resolution index for the new IFD
    * @param plane the plane index for the new IFD
    * @return an IFD that is ready to be filled with tile data
    */
-  private IFD makeIFD(int resolution, int plane)
+  private IFD makeIFD(PyramidSeries s, int resolution, int plane)
     throws FormatException, DependencyException
   {
     IFD ifd = new IFD();
-    ifd.put(IFD.LITTLE_ENDIAN, littleEndian);
-    ResolutionDescriptor descriptor = resolutions.get(resolution);
+    ifd.put(IFD.LITTLE_ENDIAN, s.littleEndian);
+    ResolutionDescriptor descriptor = s.resolutions.get(resolution);
     ifd.put(IFD.IMAGE_WIDTH, (long) descriptor.sizeX);
     ifd.put(IFD.IMAGE_LENGTH, (long) descriptor.sizeY);
     ifd.put(IFD.TILE_WIDTH, descriptor.tileSizeX);
     ifd.put(IFD.TILE_LENGTH, descriptor.tileSizeY);
     ifd.put(IFD.COMPRESSION, getTIFFCompression().getCode());
 
-    ifd.put(IFD.PLANAR_CONFIGURATION, rgb ? 2 : 1);
+    ifd.put(IFD.PLANAR_CONFIGURATION, s.rgb ? 2 : 1);
     ifd.put(IFD.SAMPLE_FORMAT, 1);
 
-    int[] bps = new int[rgb ? c : 1];
-    Arrays.fill(bps, FormatTools.getBytesPerPixel(pixelType) * 8);
+    int[] bps = new int[s.rgb ? s.c : 1];
+    Arrays.fill(bps, FormatTools.getBytesPerPixel(s.pixelType) * 8);
     ifd.put(IFD.BITS_PER_SAMPLE, bps);
 
     ifd.put(IFD.PHOTOMETRIC_INTERPRETATION,
-      rgb ? PhotoInterp.RGB.getCode() : PhotoInterp.BLACK_IS_ZERO.getCode());
+      s.rgb ? PhotoInterp.RGB.getCode() : PhotoInterp.BLACK_IS_ZERO.getCode());
     ifd.put(IFD.SAMPLES_PER_PIXEL, bps.length);
 
     if (legacy) {
@@ -874,15 +849,10 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
 
     if (resolution == 0 && plane == 0) {
       try {
-        metadata.setTiffDataIFD(new NonNegativeInteger(0), 0, 0);
+        metadata.setTiffDataIFD(
+          new NonNegativeInteger(totalPlanes), s.index, 0);
         metadata.setTiffDataPlaneCount(
-            new NonNegativeInteger(planeCount), 0, 0);
-
-        for (int extra=1; extra<metadata.getImageCount(); extra++) {
-          int ifdIndex = planeCount + extra - 1;
-          metadata.setTiffDataIFD(new NonNegativeInteger(ifdIndex), extra, 0);
-          metadata.setTiffDataPlaneCount(new NonNegativeInteger(1), 1, 0);
-        }
+          new NonNegativeInteger(s.planeCount), s.index, 0);
 
         OMEXMLService service = getService();
         String omexml = service.getOMEXML(metadata);
@@ -913,24 +883,26 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
   /**
    * Write a single tile to the writer's current resolution.
    *
+   * @param s current series
    * @param imageNumber the plane number in the resolution
    * @param buffer the array containing the tile's pixel data
    * @param tileIndex index of the tile to be written in XY space
    * @param resolution resolution index of the tile
    */
-  private void writeTile(
+  private void writeTile(PyramidSeries s,
       Integer imageNumber, byte[] buffer, int tileIndex, int resolution)
       throws FormatException, IOException
   {
-    LOG.debug("Writing image: {}, tileIndex: {}", imageNumber, tileIndex);
+    LOG.debug("Writing series: {}, image: {}, tileIndex: {}",
+      s.index, imageNumber, tileIndex);
 
-    IFD ifd = ifds[resolution].get(imageNumber);
+    IFD ifd = s.ifds[resolution].get(imageNumber);
     TiffCompression tiffCompression = getTIFFCompression();
     CodecOptions options = tiffCompression.getCompressionCodecOptions(ifd);
 
     // buffer has been padded to full tile width before calling writeTile
     // but is not necessarily full tile height (if in the bottom row)
-    int bpp = FormatTools.getBytesPerPixel(pixelType);
+    int bpp = FormatTools.getBytesPerPixel(s.pixelType);
     options.width = (int) ifd.getTileWidth();
     options.height = buffer.length / (options.width * bpp);
     options.bitsPerSample = bpp * 8;
@@ -940,23 +912,25 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
     LOG.debug("    writing {} compressed bytes at {}",
       realTile.length, outStream.getFilePointer());
 
-    writeToDisk(realTile, tileIndex, resolution, imageNumber);
+    writeToDisk(s, realTile, tileIndex, resolution, imageNumber);
   }
 
   /**
    * Write a pre-compressed buffer corresponding to the
    * given IFD and tile index.
    *
+   * @param s current series
    * @param realTile array of compressed bytes representing the tile
    * @param tileIndex index into the array of tile offsets
    * @param resolution resolution index of the tile
    * @param imageNumber image index of the tile
    */
-  private synchronized void writeToDisk(byte[] realTile, int tileIndex,
+  private synchronized void writeToDisk(PyramidSeries s,
+      byte[] realTile, int tileIndex,
       int resolution, int imageNumber)
       throws FormatException, IOException
   {
-    IFD ifd = ifds[resolution].get(imageNumber);
+    IFD ifd = s.ifds[resolution].get(imageNumber);
 
     // do not use ifd.getStripByteCounts() or ifd.getStripOffsets() here
     // as both can return values other than what is in the IFD
@@ -979,45 +953,6 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
   private OMEXMLService getService() throws DependencyException {
     ServiceFactory factory = new ServiceFactory();
     return factory.getInstance(OMEXMLService.class);
-  }
-
-  /**
-   * Add metadata for label and macro images (if present) to
-   * the current MetadataStore.  This does nothing if 5.9.x ("Faas")
-   * pyramids are being written.
-   */
-  private void attachExtraImageMetadata() throws FormatException, IOException {
-    if (legacy) {
-      // Faas pyramid files can only contain the pyramid,
-      // not any label/macro images
-      return;
-    }
-    Path label = getLabelFile();
-    Path macro = getMacroFile();
-
-    int nextImage = 1;
-    if (label != null && Files.exists(label)) {
-      try {
-        helperReader.setId(label.toString());
-        MetadataTools.populateMetadata(metadata, nextImage,
-          "Label", helperReader.getCoreMetadataList().get(0));
-        nextImage++;
-      }
-      finally {
-        helperReader.close();
-      }
-    }
-    if (macro != null && Files.exists(macro)) {
-      try {
-        helperReader.setId(macro.toString());
-        MetadataTools.populateMetadata(metadata, nextImage,
-          "Macro", helperReader.getCoreMetadataList().get(0));
-        nextImage++;
-      }
-      finally {
-        helperReader.close();
-      }
-    }
   }
 
   /**
@@ -1048,16 +983,18 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
   /**
    * Write the IFD for the given resolution and plane.
    *
+   * @param s current series
    * @param resolution the resolution index
    * @param plane the plane index
    * @param overwrite true unless this is the last IFD in the list
    */
-  private void writeIFD(int resolution, int plane, boolean overwrite)
+  private void writeIFD(
+    PyramidSeries s, int resolution, int plane, boolean overwrite)
     throws FormatException, IOException
   {
-    int ifdSize = getIFDSize(ifds[resolution].get(plane));
+    int ifdSize = getIFDSize(s.ifds[resolution].get(plane));
     long offsetPointer = outStream.getFilePointer() + ifdSize;
-    writer.writeIFD(ifds[resolution].get(plane), 0);
+    writer.writeIFD(s.ifds[resolution].get(plane), 0);
     if (overwrite) {
       overwriteNextOffset(offsetPointer);
     }
