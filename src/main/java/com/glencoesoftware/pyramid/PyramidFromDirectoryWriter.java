@@ -535,15 +535,13 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
 
       s.dimensionLengths[s.dimensionOrder.indexOf("Z") - 2] = s.z;
       s.dimensionLengths[s.dimensionOrder.indexOf("T") - 2] = s.t;
+      s.dimensionLengths[s.dimensionOrder.indexOf("C") - 2] = s.c;
 
       s.rgb = rgb && (s.c == 3) && (s.z * s.t == 1);
       if (!s.rgb) {
         s.planeCount *= s.c;
-        s.dimensionLengths[s.dimensionOrder.indexOf("C") - 2] = s.c;
       }
       else {
-        s.dimensionLengths[s.dimensionOrder.indexOf("C") - 2] = 1;
-
         OMEXMLMetadataRoot root = (OMEXMLMetadataRoot) metadata.getRoot();
         Pixels pixels = root.getImage(seriesIndex).getPixels();
         while (pixels.sizeOfChannelList() > 1) {
