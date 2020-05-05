@@ -459,6 +459,11 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
     if (n5Reader == null) {
       throw new FormatException("Could not create an N5 reader");
     }
+    Integer layoutVersion =
+      n5Reader.getAttribute("/", "bioformats2raw.layout", Integer.class);
+    if (layoutVersion == null || layoutVersion != 1) {
+      throw new FormatException("Unsupported version: " + layoutVersion);
+    }
 
     LOG.info("Creating tiled pyramid file {}", this.outputFilePath);
 
