@@ -225,12 +225,6 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
 
   private N5FSReader n5Reader = null;
 
-  /**
-   * Total plane count across all series, excluding resolutions.
-   * Used to populate TiffData.
-   */
-  private int totalPlanes = 0;
-
   /** Writer metadata. */
   OMEPyramidStore metadata;
 
@@ -506,6 +500,7 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
       seriesCount = 1;
     }
 
+    int totalPlanes = 0;
     for (int seriesIndex=0; seriesIndex<seriesCount; seriesIndex++) {
       PyramidSeries s = new PyramidSeries();
       s.index = seriesIndex;
@@ -540,15 +535,13 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
 
       s.dimensionLengths[s.dimensionOrder.indexOf("Z") - 2] = s.z;
       s.dimensionLengths[s.dimensionOrder.indexOf("T") - 2] = s.t;
+      s.dimensionLengths[s.dimensionOrder.indexOf("C") - 2] = s.c;
 
       s.rgb = rgb && (s.c == 3) && (s.z * s.t == 1);
       if (!s.rgb) {
         s.planeCount *= s.c;
-        s.dimensionLengths[s.dimensionOrder.indexOf("C") - 2] = s.c;
       }
       else {
-        s.dimensionLengths[s.dimensionOrder.indexOf("C") - 2] = 1;
-
         OMEXMLMetadataRoot root = (OMEXMLMetadataRoot) metadata.getRoot();
         Pixels pixels = root.getImage(seriesIndex).getPixels();
         while (pixels.sizeOfChannelList() > 1) {
@@ -560,6 +553,10 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
       }
 
       describePyramid(s);
+
+      metadata.setTiffDataIFD(new NonNegativeInteger(totalPlanes), s.index, 0);
+      metadata.setTiffDataPlaneCount(
+        new NonNegativeInteger(s.planeCount), s.index, 0);
 
       for (ResolutionDescriptor descriptor : s.resolutions) {
         LOG.info("Adding metadata for resolution: {}",
@@ -589,6 +586,7 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
       }
 
       series.add(s);
+      totalPlanes += s.planeCount;
     }
 
     Path metadataFile = getMetadataFile();
@@ -642,6 +640,7 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
         maxWorkers, maxWorkers, 0L, TimeUnit.MILLISECONDS, tileQueue);
       convertPyramid(s);
     }
+    writeIFDs();
 
     this.writer.close();
     outStream.close();
@@ -744,35 +743,44 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
       executor.shutdown();
       executor.awaitTermination(Long.MAX_VALUE, TimeUnit.NANOSECONDS);
     }
+  }
 
+  private void writeIFDs() throws FormatException, IOException {
     long firstIFD = outStream.getFilePointer();
 
-    if (legacy) {
-      for (int resolution=0; resolution<s.numberOfResolutions; resolution++) {
+    // write sub-IFDs for every series first
+    long[][][] subs = new long[series.size()][][];
+    for (PyramidSeries s : series) {
+      if (legacy) {
+        for (int resolution=0; resolution<s.numberOfResolutions; resolution++) {
+          for (int plane=0; plane<s.planeCount; plane++) {
+            boolean last = (resolution == s.numberOfResolutions - 1) &&
+              (plane == s.planeCount - 1);
+            writeIFD(s, resolution, plane, !last);
+          }
+        }
+      }
+      else {
+        subs[s.index] = new long[s.planeCount][s.numberOfResolutions - 1];
         for (int plane=0; plane<s.planeCount; plane++) {
-          boolean last = (resolution == s.numberOfResolutions - 1) &&
-            (plane == s.planeCount - 1);
-          writeIFD(s, resolution, plane, !last);
+          for (int r=1; r<s.numberOfResolutions; r++) {
+            subs[s.index][plane][r - 1] = outStream.getFilePointer();
+            writeIFD(s, r, plane, r < s.numberOfResolutions - 1);
+          }
         }
       }
     }
-    else {
-      long[][] subs = new long[s.planeCount][s.numberOfResolutions - 1];
-      for (int plane=0; plane<s.planeCount; plane++) {
-        for (int resolution=1; resolution<s.numberOfResolutions; resolution++) {
-          subs[plane][resolution - 1] = outStream.getFilePointer();
-          writeIFD(
-            s, resolution, plane, resolution < s.numberOfResolutions - 1);
-        }
-      }
+    // now write the full resolution IFD for each series
+    if (!legacy) {
       firstIFD = outStream.getFilePointer();
-      for (int plane=0; plane<s.planeCount; plane++) {
-        s.ifds[0].get(plane).put(IFD.SUB_IFD, subs[plane]);
-        writeIFD(s, 0, plane,
-          s.index < series.size() - 1 || plane < s.planeCount - 1);
+      for (PyramidSeries s : series) {
+        for (int plane=0; plane<s.planeCount; plane++) {
+          s.ifds[0].get(plane).put(IFD.SUB_IFD, subs[s.index][plane]);
+          writeIFD(s, 0, plane,
+            s.index < series.size() - 1 || plane < s.planeCount - 1);
+        }
       }
     }
-    totalPlanes += s.planeCount;
 
     outStream.seek(FIRST_IFD_OFFSET);
     outStream.writeLong(firstIFD);
@@ -849,11 +857,6 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
 
     if (resolution == 0 && plane == 0) {
       try {
-        metadata.setTiffDataIFD(
-          new NonNegativeInteger(totalPlanes), s.index, 0);
-        metadata.setTiffDataPlaneCount(
-          new NonNegativeInteger(s.planeCount), s.index, 0);
-
         OMEXMLService service = getService();
         String omexml = service.getOMEXML(metadata);
         ifd.put(IFD.IMAGE_DESCRIPTION, omexml);
