@@ -709,15 +709,17 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
                   Slf4JStopWatch t1 = new Slf4JStopWatch("writeTile");
                   try {
                     if (tileBytes != null) {
-                      if (region.width == descriptor.tileSizeX) {
+                      if (region.width == descriptor.tileSizeX &&
+                        region.height == descriptor.tileSizeY)
+                      {
                         writeTile(s, currentPlane, tileBytes,
                           currentIndex, currentResolution);
                       }
                       else {
-                        // pad the tile to the correct width
+                        // pad the tile to the correct width and height
                         int paddedHeight = tileBytes.length / region.width;
                         byte[] realTile =
-                          new byte[descriptor.tileSizeX * paddedHeight];
+                          new byte[descriptor.tileSizeX * descriptor.tileSizeY];
                         int totalRows = region.height;
                         int inRowLen = tileBytes.length / totalRows;
                         int outRowLen = realTile.length / totalRows;
