@@ -716,8 +716,7 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
                           currentIndex, currentResolution);
                       }
                       else {
-                        // pad the tile to the correct width and height
-                        int paddedHeight = tileBytes.length / region.width;
+                        // padded tile, use descriptor X and Y tile size
                         byte[] realTile =
                           new byte[descriptor.tileSizeX * descriptor.tileSizeY];
                         int totalRows = region.height;
