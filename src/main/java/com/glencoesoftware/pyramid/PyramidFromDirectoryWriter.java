@@ -721,10 +721,9 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
                           new byte[descriptor.tileSizeX * descriptor.tileSizeY];
                         int totalRows = region.height;
                         int inRowLen = tileBytes.length / totalRows;
-                        int outRowLen = realTile.length / totalRows;
                         for (int row=0; row<totalRows; row++) {
                           System.arraycopy(tileBytes, row * inRowLen,
-                            realTile, row * outRowLen, inRowLen);
+                            realTile, row * descriptor.tileSizeX, inRowLen);
                         }
                         writeTile(s, currentPlane, realTile,
                           currentIndex, currentResolution);
