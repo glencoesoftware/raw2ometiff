@@ -1,7 +1,6 @@
 plugins {
     id 'application'
     id 'eclipse'
-    id 'java'
     id 'checkstyle'
 }
 
@@ -24,18 +23,24 @@ repositories {
 }
 
 dependencies {
-    compile ('info.picocli:picocli:3.9.3')
-    compile ('ome:formats-bsd:6.2.1')
+    implementation 'info.picocli:picocli:3.9.3'
+    implementation 'ome:formats-bsd:6.2.1'
     // be careful here, this is a newer version of org.json:json than formats-gpl uses
-    compile ('org.json:json:20190722')
-    compile ('org.janelia.saalfeldlab:n5:2.1.6')
-    compile ('org.janelia.saalfeldlab:n5-blosc:1.0.1')
-    compile ('org.janelia.saalfeldlab:n5-zarr:0.0.2-beta')
+    implementation 'org.json:json:20190722'
+    implementation 'org.janelia.saalfeldlab:n5:2.1.6'
+    implementation 'org.janelia.saalfeldlab:n5-blosc:1.0.1'
+    implementation 'org.janelia.saalfeldlab:n5-zarr:0.0.2-beta'
 }
 
-applicationDistribution.from("$projectDir") {
-    include 'LICENSE.txt'
-    include 'bin/*'
+distributions {
+    main {
+        contents {
+            from("$projectDir") {
+                include 'README.md'
+                include 'LICENSE.txt'
+            }
+        }
+    }
 }
 
 checkstyle {
