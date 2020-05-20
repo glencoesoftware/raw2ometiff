@@ -24,7 +24,7 @@ repositories {
 
 dependencies {
     implementation 'info.picocli:picocli:3.9.3'
-    implementation 'ome:formats-bsd:6.2.1'
+    implementation 'ome:formats-bsd:6.4.0'
     // be careful here, this is a newer version of org.json:json than formats-gpl uses
     implementation 'org.json:json:20190722'
     implementation 'org.janelia.saalfeldlab:n5:2.1.6'
