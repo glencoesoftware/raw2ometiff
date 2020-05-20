@@ -21,6 +21,9 @@ repositories {
         url 'https://repo.glencoesoftware.com/repository/n5-zarr-snapshots/'
     }
     maven {
+        url 'https://repo.glencoesoftware.com/repository/bioformats2raw2ometiff/'
+    }
+    maven {
         url 'https://saalfeldlab.github.io/maven'
     }
 }
@@ -33,6 +36,12 @@ dependencies {
     implementation 'org.janelia.saalfeldlab:n5:2.1.6'
     implementation 'org.janelia.saalfeldlab:n5-blosc:1.0.1'
     implementation 'org.janelia.saalfeldlab:n5-zarr:0.0.3-SNAPSHOT'
+    testImplementation 'junit:junit:4.12'
+    testImplementation 'com.glencoesoftware:bioformats2raw:0.2.3-SNAPSHOT'
+}
+
+test {
+    useJUnit()
 }
 
 distributions {
