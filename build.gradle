@@ -1,7 +1,6 @@
 plugins {
     id 'application'
     id 'eclipse'
-    id 'java'
     id 'checkstyle'
 }
 
@@ -19,23 +18,41 @@ repositories {
         url 'https://artifacts.openmicroscopy.org/artifactory/repo/'
     }
     maven {
+        url 'https://repo.glencoesoftware.com/repository/n5-zarr-snapshots/'
+    }
+    maven {
+        url 'https://repo.glencoesoftware.com/repository/bioformats2raw2ometiff/'
+    }
+    maven {
         url 'https://saalfeldlab.github.io/maven'
     }
 }
 
 dependencies {
-    compile ('info.picocli:picocli:3.9.3')
-    compile ('ome:formats-bsd:6.2.1')
+    implementation 'info.picocli:picocli:4.2.0'
+    implementation 'ome:formats-bsd:6.4.0'
     // be careful here, this is a newer version of org.json:json than formats-gpl uses
-    compile ('org.json:json:20190722')
-    compile ('org.janelia.saalfeldlab:n5:2.1.6')
-    compile ('org.janelia.saalfeldlab:n5-blosc:1.0.1')
-    compile ('org.janelia.saalfeldlab:n5-zarr:0.0.2-beta')
+    implementation 'org.json:json:20190722'
+    implementation 'org.janelia.saalfeldlab:n5:2.1.6'
+    implementation 'org.janelia.saalfeldlab:n5-blosc:1.0.1'
+    implementation 'org.janelia.saalfeldlab:n5-zarr:0.0.3-SNAPSHOT'
+    testImplementation 'junit:junit:4.12'
+    testImplementation 'com.glencoesoftware:bioformats2raw:0.2.3-SNAPSHOT'
 }
 
-applicationDistribution.from("$projectDir") {
-    include 'LICENSE.txt'
-    include 'bin/*'
+test {
+    useJUnit()
+}
+
+distributions {
+    main {
+        contents {
+            from("$projectDir") {
+                include 'README.md'
+                include 'LICENSE.txt'
+            }
+        }
+    }
 }
 
 checkstyle {
