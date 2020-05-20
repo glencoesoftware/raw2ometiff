@@ -666,7 +666,7 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
     }
 
     int rgbChannels = s.rgb ? s.c : 1;
-
+    int bytesPerPixel = FormatTools.getBytesPerPixel(s.pixelType);
     try {
       for (int resolution=0; resolution<s.numberOfResolutions; resolution++) {
         LOG.info("Converting resolution #{}", resolution);
@@ -718,12 +718,14 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
                       else {
                         // padded tile, use descriptor X and Y tile size
                         byte[] realTile =
-                          new byte[descriptor.tileSizeX * descriptor.tileSizeY];
+                          new byte[descriptor.tileSizeX * descriptor.tileSizeY
+                                   * bytesPerPixel];
                         int totalRows = region.height;
-                        int inRowLen = tileBytes.length / totalRows;
+                        int inRowLen = region.width * bytesPerPixel;
+                        int outRowLen = descriptor.tileSizeX * bytesPerPixel;
                         for (int row=0; row<totalRows; row++) {
                           System.arraycopy(tileBytes, row * inRowLen,
-                            realTile, row * descriptor.tileSizeX, inRowLen);
+                            realTile, row * outRowLen, inRowLen);
                         }
                         writeTile(s, currentPlane, realTile,
                           currentIndex, currentResolution);

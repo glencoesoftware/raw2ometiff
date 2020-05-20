@@ -9,6 +9,8 @@ package com.glencoesoftware.raw2ometiff.test;
 
 import java.io.File;
 import java.io.IOException;
+import java.nio.ByteBuffer;
+import java.nio.ShortBuffer;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -21,6 +23,8 @@ import com.glencoesoftware.bioformats2raw.Converter;
 import com.glencoesoftware.pyramid.PyramidFromDirectoryWriter;
 
 import loci.formats.ImageReader;
+import loci.formats.tiff.IFDList;
+import loci.formats.tiff.TiffParser;
 import picocli.CommandLine;
 
 import org.junit.Assert;
@@ -187,6 +191,74 @@ public class ConversionTest {
       reader.setFlattenedResolutions(false);
       reader.setId(outputOmeTiff.toString());
       Assert.assertEquals(2, reader.getResolutionCount());
+    }
+  }
+
+  /**
+   * Test South and East edge padding.
+   */
+  @Test
+  public void testSouthEastEdgePadding() throws Exception {
+    input = fake();
+    assertBioFormats2Raw("-w", "240", "-h", "240");
+    assertTool("--compression", "raw");
+    try (ImageReader reader = new ImageReader()) {
+      reader.setFlattenedResolutions(false);
+      reader.setId(outputOmeTiff.toString());
+      Assert.assertEquals(2, reader.getResolutionCount());
+      Assert.assertEquals(240, reader.getOptimalTileWidth());
+      Assert.assertEquals(240, reader.getOptimalTileHeight());
+      ByteBuffer plane = ByteBuffer.wrap(reader.openBytes(0));
+      Assert.assertEquals(512 * 512, plane.capacity());
+      int offset = 0;
+      for (int y = 0; y < reader.getSizeY(); y++) {
+        offset = (y * 512) + 511;
+        Assert.assertEquals(255, Byte.toUnsignedInt(plane.get(offset)));
+      }
+    }
+    try (TiffParser tiffParser = new TiffParser(outputOmeTiff.toString())) {
+      IFDList mainIFDs = tiffParser.getMainIFDs();
+      Assert.assertEquals(1, mainIFDs.size());
+      int tileSize = 240 * 240;
+      Assert.assertArrayEquals(new long[] {
+        tileSize, tileSize, tileSize,  // Row 1
+        tileSize, tileSize, tileSize,  // Row 2
+        tileSize, tileSize, tileSize   // Row 3
+      }, mainIFDs.get(0).getStripByteCounts());
+    }
+  }
+
+  /**
+   * Test edge padding uint16.
+   */
+  @Test
+  public void testEdgePaddingUint16() throws Exception {
+    input = fake("pixelType", "uint16");
+    assertBioFormats2Raw("-w", "240", "-h", "240");
+    assertTool("--compression", "raw");
+    try (ImageReader reader = new ImageReader()) {
+      reader.setFlattenedResolutions(false);
+      reader.setId(outputOmeTiff.toString());
+      Assert.assertEquals(2, reader.getResolutionCount());
+      Assert.assertEquals(240, reader.getOptimalTileWidth());
+      Assert.assertEquals(240, reader.getOptimalTileHeight());
+      ShortBuffer plane = ByteBuffer.wrap(reader.openBytes(0)).asShortBuffer();
+      Assert.assertEquals(512 * 512, plane.capacity());
+      int offset = 0;
+      for (int y = 0; y < reader.getSizeY(); y++) {
+        offset = (y * 512) + 511;
+        Assert.assertEquals(511, Short.toUnsignedInt(plane.get(offset)));
+      }
+    }
+    try (TiffParser tiffParser = new TiffParser(outputOmeTiff.toString())) {
+      IFDList mainIFDs = tiffParser.getMainIFDs();
+      Assert.assertEquals(1, mainIFDs.size());
+      int tileSize = 240 * 240 * 2;
+      Assert.assertArrayEquals(new long[] {
+        tileSize, tileSize, tileSize,  // Row 1
+        tileSize, tileSize, tileSize,  // Row 2
+        tileSize, tileSize, tileSize   // Row 3
+      }, mainIFDs.get(0).getStripByteCounts());
     }
   }
 
