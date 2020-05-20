@@ -9,6 +9,7 @@ package com.glencoesoftware.raw2ometiff.test;
 
 import java.io.File;
 import java.io.IOException;
+import java.lang.reflect.Array;
 import java.nio.ByteBuffer;
 import java.nio.ShortBuffer;
 import java.nio.file.Files;
@@ -22,6 +23,8 @@ import java.util.Map;
 import com.glencoesoftware.bioformats2raw.Converter;
 import com.glencoesoftware.pyramid.PyramidFromDirectoryWriter;
 
+import loci.common.DataTools;
+import loci.formats.FormatTools;
 import loci.formats.ImageReader;
 import loci.formats.tiff.IFDList;
 import loci.formats.tiff.TiffParser;
@@ -180,6 +183,54 @@ public class ConversionTest {
   }
 
   /**
+   * Compare each pixel in each plane in each series of the input fake
+   * and output OME-TIFF files.  Sub-resolutions are not checked.
+   */
+  void iteratePixels() throws Exception {
+    try (ImageReader inputReader = new ImageReader()) {
+      inputReader.setId(input.toString());
+      try (ImageReader outputReader = new ImageReader()) {
+        outputReader.setFlattenedResolutions(false);
+        outputReader.setId(outputOmeTiff.toString());
+
+        for (int series=0; series<inputReader.getSeriesCount(); series++) {
+          inputReader.setSeries(series);
+          outputReader.setSeries(series);
+
+          for (int plane=0; plane<inputReader.getImageCount(); plane++) {
+            Object inputPlane = getPlane(inputReader, plane);
+            Object outputPlane = getPlane(outputReader, plane);
+
+            int inputLength = Array.getLength(inputPlane);
+            int outputLength = Array.getLength(outputPlane);
+            Assert.assertEquals(inputLength, outputLength);
+            for (int px=0; px<inputLength; px++) {
+              Assert.assertEquals(
+                  Array.get(inputPlane, px), Array.get(outputPlane, px));
+            }
+          }
+        }
+      }
+    }
+  }
+
+  /**
+   * Get the specified plane as a primitive array.
+   *
+   * @param reader initialized reader with correct series set
+   * @param planeIndex plane to read
+   * @return primitive array of pixels
+   */
+  Object getPlane(ImageReader reader, int planeIndex) throws Exception {
+    byte[] rawPlane = reader.openBytes(planeIndex);
+    int pixelType = reader.getPixelType();
+    return DataTools.makeDataArray(rawPlane,
+        FormatTools.getBytesPerPixel(pixelType),
+        FormatTools.isFloatingPoint(pixelType),
+        reader.isLittleEndian());
+  }
+
+  /**
    * Test defaults.
    */
   @Test
@@ -192,6 +243,7 @@ public class ConversionTest {
       reader.setId(outputOmeTiff.toString());
       Assert.assertEquals(2, reader.getResolutionCount());
     }
+    iteratePixels();
   }
 
   /**
@@ -226,6 +278,7 @@ public class ConversionTest {
         tileSize, tileSize, tileSize   // Row 3
       }, mainIFDs.get(0).getStripByteCounts());
     }
+    iteratePixels();
   }
 
   /**
@@ -260,6 +313,29 @@ public class ConversionTest {
         tileSize, tileSize, tileSize   // Row 3
       }, mainIFDs.get(0).getStripByteCounts());
     }
+    iteratePixels();
+  }
+
+  /**
+   * Test 17x19 tile size with uint16 data.
+   */
+  @Test
+  public void testOddTileSize() throws Exception {
+    input = fake("pixelType", "uint16");
+    assertBioFormats2Raw("-w", "17", "-h", "19");
+    assertTool();
+    iteratePixels();
+  }
+
+  /**
+   * Test 128x128 tile size with 497x498 image.
+   */
+  @Test
+  public void testOddImageSize() throws Exception {
+    input = fake("sizeX", "497", "sizeY", "498", "pixelType", "uint16");
+    assertBioFormats2Raw("-w", "128", "-h", "128");
+    assertTool();
+    iteratePixels();
   }
 
 }
