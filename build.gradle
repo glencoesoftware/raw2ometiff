@@ -24,7 +24,7 @@ repositories {
         url 'https://repo.glencoesoftware.com/repository/bioformats2raw2ometiff/'
     }
     maven {
-        url 'https://saalfeldlab.github.io/maven'
+        url 'https://maven.scijava.org/content/groups/public'
     }
 }
 
@@ -33,9 +33,9 @@ dependencies {
     implementation 'ome:formats-bsd:6.4.0'
     // be careful here, this is a newer version of org.json:json than formats-gpl uses
     implementation 'org.json:json:20190722'
-    implementation 'org.janelia.saalfeldlab:n5:2.1.6'
-    implementation 'org.janelia.saalfeldlab:n5-blosc:1.0.1'
-    implementation 'org.janelia.saalfeldlab:n5-zarr:0.0.3-SNAPSHOT'
+    implementation 'org.janelia.saalfeldlab:n5:2.2.0'
+    implementation 'org.janelia.saalfeldlab:n5-blosc:1.1.0'
+    implementation 'org.janelia.saalfeldlab:n5-zarr:0.0.4'
     testImplementation 'junit:junit:4.12'
     testImplementation 'com.glencoesoftware:bioformats2raw:0.2.3-SNAPSHOT'
 }
