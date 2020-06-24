@@ -149,6 +149,12 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
   String compression = "LZW";
 
   @Option(
+      names = "--quality",
+      description = "Compression quality"
+  )
+  Double compressionQuality;
+
+  @Option(
       names = "--legacy",
       description = "Write a Bio-Formats 5.9.x pyramid instead of OME-TIFF"
   )
@@ -917,6 +923,9 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
     options.height = buffer.length / (options.width * bpp);
     options.bitsPerSample = bpp * 8;
     options.channels = 1;
+    if (compressionQuality != null) {
+      options.quality = compressionQuality;
+    }
 
     byte[] realTile = tiffCompression.compress(buffer, options);
     LOG.debug("    writing {} compressed bytes at {}",
