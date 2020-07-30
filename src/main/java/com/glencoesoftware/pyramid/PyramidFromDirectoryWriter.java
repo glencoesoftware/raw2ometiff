@@ -15,6 +15,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Hashtable;
 import java.util.List;
+import java.util.Optional;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutorService;
@@ -141,6 +142,13 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
   boolean debug = false;
 
   @Option(
+      names = "--version",
+      description = "Print version information and exit",
+      help = true
+  )
+  boolean printVersion = false;
+
+  @Option(
       names = "--compression",
       completionCandidates = CompressionTypes.class,
       description = "Compression type for output OME-TIFF file " +
@@ -251,6 +259,15 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
 
   @Override
   public Void call() throws Exception {
+    if (printVersion) {
+      String version = Optional.ofNullable(
+        this.getClass().getPackage().getImplementationVersion()
+        ).orElse("development");
+      System.out.println("Version = " + version);
+      System.out.println("Bio-Formats version = " + FormatTools.VERSION);
+      return null;
+    }
+
     ch.qos.logback.classic.Logger root = (ch.qos.logback.classic.Logger)
       LoggerFactory.getLogger(Logger.ROOT_LOGGER_NAME);
     if (debug) {
