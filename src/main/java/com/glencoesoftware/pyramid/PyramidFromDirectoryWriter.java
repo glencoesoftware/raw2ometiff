@@ -851,7 +851,16 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
     ifd.put(IFD.COMPRESSION, getTIFFCompression().getCode());
 
     ifd.put(IFD.PLANAR_CONFIGURATION, s.rgb ? 2 : 1);
-    ifd.put(IFD.SAMPLE_FORMAT, 1);
+
+    int sampleFormat = 1;
+    if (FormatTools.isFloatingPoint(s.pixelType)) {
+      sampleFormat = 3;
+    }
+    else if (FormatTools.isSigned(s.pixelType)) {
+      sampleFormat = 2;
+    }
+
+    ifd.put(IFD.SAMPLE_FORMAT, sampleFormat);
 
     int[] bps = new int[s.rgb ? s.c : 1];
     Arrays.fill(bps, FormatTools.getBytesPerPixel(s.pixelType) * 8);
