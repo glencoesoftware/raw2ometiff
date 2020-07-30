@@ -44,6 +44,15 @@ test {
     useJUnit()
 }
 
+jar {
+    manifest {
+        attributes(
+            "Main-Class": mainClassName,
+            "Implementation-Version": version
+        )
+    }
+}
+
 distributions {
     main {
         contents {
