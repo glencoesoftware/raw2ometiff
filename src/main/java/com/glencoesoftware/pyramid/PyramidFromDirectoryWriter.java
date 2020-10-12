@@ -49,7 +49,10 @@ import loci.formats.tiff.IFDList;
 import loci.formats.tiff.PhotoInterp;
 import loci.formats.tiff.TiffCompression;
 import loci.formats.tiff.TiffConstants;
+import loci.formats.tiff.TiffRational;
 import loci.formats.tiff.TiffSaver;
+import ome.units.UNITS;
+import ome.units.quantity.Length;
 import ome.xml.meta.OMEXMLMetadataRoot;
 import ome.xml.model.Channel;
 import ome.xml.model.Pixels;
@@ -919,7 +922,25 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
       }
     }
 
+    ifd.put(IFD.RESOLUTION_UNIT, 3);
+    ifd.put(IFD.X_RESOLUTION,
+      getPhysicalSize(metadata.getPixelsPhysicalSizeX(s.index)));
+    ifd.put(IFD.Y_RESOLUTION,
+      getPhysicalSize(metadata.getPixelsPhysicalSizeY(s.index)));
+
     return ifd;
+  }
+
+  private TiffRational getPhysicalSize(Length size) {
+    if (size == null || size.value(UNITS.MICROMETER) == null) {
+      return new TiffRational(0, 1000);
+    }
+    Double physicalSize = size.value(UNITS.MICROMETER).doubleValue();
+    if (physicalSize.doubleValue() != 0) {
+      physicalSize = 1d / physicalSize;
+    }
+
+    return new TiffRational((long) (physicalSize * 1000 * 10000), 1000);
   }
 
   /**
