@@ -26,6 +26,7 @@ import com.glencoesoftware.pyramid.PyramidFromDirectoryWriter;
 import loci.common.DataTools;
 import loci.formats.FormatTools;
 import loci.formats.ImageReader;
+import loci.formats.tiff.IFD;
 import loci.formats.tiff.IFDList;
 import loci.formats.tiff.TiffParser;
 import picocli.CommandLine;
@@ -336,6 +337,24 @@ public class ConversionTest {
     assertBioFormats2Raw("-w", "128", "-h", "128");
     assertTool();
     iteratePixels();
+  }
+
+  /**
+   * Test TIFF metadata.
+   */
+  @Test
+  public void testMetadata() throws Exception {
+    input = fake("physicalSizeX", "0.5", "physicalSizeY", "0.6");
+    assertBioFormats2Raw();
+    assertTool();
+
+    try (TiffParser parser = new TiffParser(outputOmeTiff.toString())) {
+      IFDList mainIFDs = parser.getMainIFDs();
+      Assert.assertEquals(1, mainIFDs.size());
+      IFD ifd = mainIFDs.get(0);
+      Assert.assertEquals(ifd.getXResolution(), 0.5, 0.0001);
+      Assert.assertEquals(ifd.getYResolution(), 0.6, 0.0001);
+    }
   }
 
 }
