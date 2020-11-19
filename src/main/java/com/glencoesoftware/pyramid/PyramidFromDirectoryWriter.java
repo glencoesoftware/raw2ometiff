@@ -15,6 +15,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Hashtable;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.Callable;
@@ -173,6 +174,8 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
   /** Writer metadata. */
   OMEPyramidStore metadata;
 
+  private Map<String, Object> plateData = null;
+
   /**
    * Construct a writer for performing the pyramid conversion.
    */
@@ -302,6 +305,15 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
    * @return number of series
    */
   private int getSeriesCount() throws IOException {
+    if (plateData != null) {
+      int count = 0;
+      List<Map<String, Object>> wells =
+        (List<Map<String, Object>>) plateData.get("wells");
+      for (Map<String, Object> well : wells) {
+        count += n5Reader.list("/0/" + well.get("path")).length;
+      }
+      return count;
+    }
     return n5Reader.list("/").length;
   }
 
@@ -312,7 +324,22 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
    * @param s current series
    */
   private void findNumberOfResolutions(PyramidSeries s) throws IOException {
-    s.path = "/" + s.index;
+    if (plateData != null) {
+      List<Map<String, Object>> wells =
+        (List<Map<String, Object>>) plateData.get("wells");
+      int index = 0;
+      for (Map<String, Object> well : wells) {
+        int fields = n5Reader.list("/0/" + well.get("path")).length;
+        if (index + fields >= s.index) {
+          s.path = "/0/" + well.get("path") + "/" + (s.index - index);
+          break;
+        }
+        index += fields;
+      }
+    }
+    else {
+      s.path = "/" + s.index;
+    }
     if (!n5Reader.exists(s.path)) {
       throw new IOException("Expected series " + s.index + " not found");
     }
@@ -336,6 +363,8 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
     if (layoutVersion == null || layoutVersion != 1) {
       throw new FormatException("Unsupported version: " + layoutVersion);
     }
+
+    plateData = n5Reader.getAttribute("/0", "plate", Map.class);
 
     LOG.info("Creating tiled pyramid file {}", this.outputFilePath);
 
