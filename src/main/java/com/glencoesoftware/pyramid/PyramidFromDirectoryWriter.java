@@ -9,10 +9,12 @@ package com.glencoesoftware.pyramid;
 
 import java.io.IOException;
 import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.HashMap;
 import java.util.Hashtable;
 import java.util.List;
 import java.util.Map;
@@ -24,8 +26,11 @@ import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 
 import org.janelia.saalfeldlab.n5.DataBlock;
+import org.janelia.saalfeldlab.n5.DatasetAttributes;
+import org.janelia.saalfeldlab.n5.DataType;
 import org.janelia.saalfeldlab.n5.N5FSReader;
 import org.janelia.saalfeldlab.n5.zarr.N5ZarrReader;
+import org.janelia.saalfeldlab.n5.zarr.ZarrDatasetAttributes;
 
 import ch.qos.logback.classic.Level;
 import org.slf4j.Logger;
@@ -55,6 +60,9 @@ import ome.units.quantity.Length;
 import ome.xml.meta.OMEXMLMetadataRoot;
 import ome.xml.model.Channel;
 import ome.xml.model.Pixels;
+import ome.xml.model.enums.DimensionOrder;
+import ome.xml.model.enums.EnumerationException;
+import ome.xml.model.enums.PixelType;
 import ome.xml.model.primitives.NonNegativeInteger;
 import ome.xml.model.primitives.PositiveInteger;
 
@@ -300,6 +308,157 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
   }
 
   /**
+   * Translate N5/Zarr/... attributes to the current metadata store.
+   */
+  private void populateMetadata() throws IOException {
+    if (plateData != null) {
+      List<Map<String, Object>> acquisitions =
+        (List<Map<String, Object>>) plateData.get("acquisitions");
+      List<Map<String, Object>> columns =
+        (List<Map<String, Object>>) plateData.get("columns");
+      List<Map<String, Object>> rows =
+        (List<Map<String, Object>>) plateData.get("rows");
+      List<Map<String, Object>> wells =
+        (List<Map<String, Object>>) plateData.get("wells");
+
+      Map<String, Integer> rowLookup = new HashMap<String, Integer>();
+      Map<String, Integer> colLookup = new HashMap<String, Integer>();
+
+      for (int i=0; i<rows.size(); i++) {
+        rowLookup.put(rows.get(i).get("name").toString(), i);
+      }
+      for (int i=0; i<columns.size(); i++) {
+        Object name = columns.get(i).get("name");
+        colLookup.put(getString(name), i);
+      }
+
+      metadata.setPlateID(MetadataTools.createLSID("Plate", 0), 0);
+      metadata.setPlateName((String) plateData.get("name"), 0);
+      metadata.setPlateRows(new PositiveInteger(rows.size()), 0);
+      metadata.setPlateColumns(new PositiveInteger(columns.size()), 0);
+
+      Map<String, Integer> acqLookup = new HashMap<String, Integer>();
+      List<Integer> wsCounter = new ArrayList<Integer>();
+      for (int i=0; i<acquisitions.size(); i++) {
+        String acqID = MetadataTools.createLSID("PlateAcquisition", 0, i);
+        metadata.setPlateAcquisitionID(acqID, 0, i);
+        String plateAcqName = (String) acquisitions.get(i).get("path");
+        metadata.setPlateAcquisitionName(plateAcqName, 0, i);
+        wsCounter.add(0);
+        acqLookup.put(plateAcqName, i);
+      }
+
+      int wsIndex = 0;
+      for (int i=0; i<wells.size(); i++) {
+        String well = (String) wells.get(i).get("path");
+        String[] path = well.split("/");
+
+        metadata.setWellID(MetadataTools.createLSID("Well", 0, i), 0, i);
+        metadata.setWellColumn(
+          new NonNegativeInteger(colLookup.get(path[path.length - 1])), 0, i);
+        metadata.setWellRow(
+          new NonNegativeInteger(rowLookup.get(path[path.length - 2])), 0, i);
+
+        Map<String, Object> wellAttr =
+          n5Reader.getAttribute(well, "well", Map.class);
+        List<Map<String, Object>> images =
+          (List<Map<String, Object>>) wellAttr.get("images");
+        for (int img=0; img<images.size(); img++) {
+          String wsID = MetadataTools.createLSID("WellSample", 0, i, img);
+          metadata.setWellSampleID(wsID, 0, i, img);
+          metadata.setWellSampleIndex(
+            new NonNegativeInteger(wsIndex), 0, i, img);
+
+          String imageID = MetadataTools.createLSID("Image", wsIndex);
+          metadata.setWellSampleImageRef(imageID, 0, i, img);
+          int acquisition = acqLookup.get(path[path.length - 3]);
+          int acqIndex = wsCounter.get(acquisition);
+          metadata.setPlateAcquisitionWellSampleRef(
+            wsID, 0, acquisition, acqIndex);
+          wsCounter.set(acquisition, acqIndex + 1);
+
+          metadata.setImageID(imageID, wsIndex);
+          metadata.setPixelsID(
+            MetadataTools.createLSID("Pixels", wsIndex), wsIndex);
+
+          String imgName = (String) images.get(img).get("path");
+          String imgPath = well + "/" + imgName;
+          metadata.setImageName(imgName, wsIndex);
+
+          // append resolution index
+          imgPath += "/0";
+
+          DatasetAttributes dataset = n5Reader.getDatasetAttributes(imgPath);
+          long[] dims = dataset.getDimensions();
+
+          String order = "XYZCT";
+          int c = (int) dims[order.indexOf("C")];
+          PixelType type = getPixelType(dataset.getDataType());
+
+          // N5 format only allows big endian data
+          // Zarr format allows both
+
+          boolean bigEndian = true;
+          if (dataset instanceof ZarrDatasetAttributes) {
+            ZarrDatasetAttributes zarrDataset = (ZarrDatasetAttributes) dataset;
+            bigEndian =
+              zarrDataset.getDType().getOrder() == ByteOrder.BIG_ENDIAN;
+          }
+
+          metadata.setPixelsBigEndian(bigEndian, wsIndex);
+          metadata.setPixelsType(type, wsIndex);
+          metadata.setPixelsSizeX(new PositiveInteger((int) dims[0]), wsIndex);
+          metadata.setPixelsSizeY(new PositiveInteger((int) dims[1]), wsIndex);
+          metadata.setPixelsSizeZ(
+            new PositiveInteger((int) dims[order.indexOf("Z")]), wsIndex);
+          metadata.setPixelsSizeC(new PositiveInteger(c), wsIndex);
+          metadata.setPixelsSizeT(
+            new PositiveInteger((int) dims[order.indexOf("T")]), wsIndex);
+          try {
+            metadata.setPixelsDimensionOrder(
+              DimensionOrder.fromString(order), wsIndex);
+          }
+          catch (EnumerationException e) {
+            LOG.warn("Could not save dimension order", e);
+          }
+
+          for (int ch=0; ch<c; ch++) {
+            metadata.setChannelID(
+              MetadataTools.createLSID("Channel", wsIndex, ch), wsIndex, ch);
+            metadata.setChannelSamplesPerPixel(
+              new PositiveInteger(1), wsIndex, ch);
+          }
+
+          wsIndex++;
+        }
+      }
+    }
+  }
+
+  private PixelType getPixelType(DataType type) {
+    switch (type) {
+      case INT8:
+        return PixelType.INT8;
+      case UINT8:
+        return PixelType.UINT8;
+      case INT16:
+        return PixelType.INT16;
+      case UINT16:
+        return PixelType.UINT16;
+      case INT32:
+        return PixelType.INT32;
+      case UINT32:
+        return PixelType.UINT32;
+      case FLOAT32:
+        return PixelType.FLOAT;
+      case FLOAT64:
+        return PixelType.DOUBLE;
+      default:
+        throw new IllegalArgumentException("Unsupported pixel type: " + type);
+    }
+  }
+
+  /**
    * Calculate the number of series.
    *
    * @return number of series
@@ -310,7 +469,7 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
       List<Map<String, Object>> wells =
         (List<Map<String, Object>>) plateData.get("wells");
       for (Map<String, Object> well : wells) {
-        count += n5Reader.list("/0/" + well.get("path")).length;
+        count += n5Reader.list((String) well.get("path")).length;
       }
       return count;
     }
@@ -329,9 +488,9 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
         (List<Map<String, Object>>) plateData.get("wells");
       int index = 0;
       for (Map<String, Object> well : wells) {
-        int fields = n5Reader.list("/0/" + well.get("path")).length;
-        if (index + fields >= s.index) {
-          s.path = "/0/" + well.get("path") + "/" + (s.index - index);
+        int fields = n5Reader.list((String) well.get("path")).length;
+        if (index + fields > s.index) {
+          s.path = well.get("path") + "/" + (s.index - index);
           break;
         }
         index += fields;
@@ -341,7 +500,8 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
       s.path = "/" + s.index;
     }
     if (!n5Reader.exists(s.path)) {
-      throw new IOException("Expected series " + s.index + " not found");
+      throw new IOException("Expected series " + s.index +
+        " (" + s.path + ") not found");
     }
     s.numberOfResolutions = n5Reader.list(s.path).length;
   }
@@ -360,11 +520,14 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
     }
     Integer layoutVersion =
       n5Reader.getAttribute("/", "bioformats2raw.layout", Integer.class);
-    if (layoutVersion == null || layoutVersion != 1) {
+    if (layoutVersion == null) {
+      LOG.warn("Layout version not recorded; may be unsupported");
+    }
+    else if (layoutVersion != 1) {
       throw new FormatException("Unsupported version: " + layoutVersion);
     }
 
-    plateData = n5Reader.getAttribute("/0", "plate", Map.class);
+    plateData = n5Reader.getAttribute("/", "plate", Map.class);
 
     LOG.info("Creating tiled pyramid file {}", this.outputFilePath);
 
@@ -391,6 +554,7 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
         }
         else {
           metadata = (OMEPyramidStore) service.createOMEXMLMetadata();
+          populateMetadata();
         }
       }
       catch (ServiceException e) {
@@ -904,6 +1068,15 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
     if (Files.exists(n5)) {
       n5Reader = new N5FSReader(n5.toString());
     }
+
+    if (n5Reader == null) {
+      if (inputDirectory.toString().endsWith(".zarr")) {
+        n5Reader = new N5ZarrReader(inputDirectory.toString());
+      }
+      else if (inputDirectory.toString().endsWith(".n5")) {
+        n5Reader = new N5FSReader(inputDirectory.toString());
+      }
+    }
   }
 
   /**
@@ -976,6 +1149,16 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
           value.toString());
       }
     }
+  }
+
+  private String getString(Object attr) {
+    if (attr == null) {
+      return null;
+    }
+    if (attr instanceof Double) {
+      return String.valueOf(((Double) attr).intValue());
+    }
+    return attr.toString();
   }
 
 }
