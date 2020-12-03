@@ -342,7 +342,7 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
       for (int i=0; i<acquisitions.size(); i++) {
         String acqID = MetadataTools.createLSID("PlateAcquisition", 0, i);
         metadata.setPlateAcquisitionID(acqID, 0, i);
-        String plateAcqName = (String) acquisitions.get(i).get("path");
+        String plateAcqName = acquisitions.get(i).get("id").toString();
         metadata.setPlateAcquisitionName(plateAcqName, 0, i);
         wsCounter.add(0);
         acqLookup.put(plateAcqName, i);
@@ -371,7 +371,8 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
 
           String imageID = MetadataTools.createLSID("Image", wsIndex);
           metadata.setWellSampleImageRef(imageID, 0, i, img);
-          int acquisition = acqLookup.get(path[path.length - 3]);
+          int acquisition =
+            acqLookup.get(images.get(img).get("acquisition").toString());
           int acqIndex = wsCounter.get(acquisition);
           metadata.setPlateAcquisitionWellSampleRef(
             wsID, 0, acquisition, acqIndex);
@@ -503,7 +504,24 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
       throw new IOException("Expected series " + s.index +
         " (" + s.path + ") not found");
     }
-    s.numberOfResolutions = n5Reader.list(s.path).length;
+
+    // use multiscales metadata if it exists, to distinguish between
+    // resolutions and labels
+    // if no multiscales metadata (older dataset?), assume no labels
+    // and just use the path listing length
+    List<Map<String, Object>> multiscales =
+      n5Reader.getAttribute(s.path, "multiscales", List.class);
+    if (multiscales != null && multiscales.size() > 0) {
+      List<Map<String, Object>> datasets =
+        (List<Map<String, Object>>) multiscales.get(0).get("datasets");
+      if (datasets != null) {
+        s.numberOfResolutions = datasets.size();
+      }
+    }
+
+    if (s.numberOfResolutions == 0) {
+      s.numberOfResolutions = n5Reader.list(s.path).length;
+    }
   }
 
   /**
