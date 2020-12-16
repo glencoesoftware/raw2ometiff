@@ -122,10 +122,14 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
   Path inputDirectory;
 
   @Option(
-      names = "--debug",
-      description = "Turn on debug logging"
+      names = {"--log-level", "--debug"},
+      arity = "0..1",
+      description = "Change logging level; valid values are " +
+          "OFF, ERROR, WARN, INFO, DEBUG, TRACE and ALL. " +
+          "(default: $(DEFAULT-VALUE})",
+      fallbackValue = "DEBUG"
   )
-  boolean debug = false;
+  String logLevel = "INFO";
 
   @Option(
       names = "--version",
@@ -883,12 +887,7 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
   private void setupLogger() {
     ch.qos.logback.classic.Logger root = (ch.qos.logback.classic.Logger)
       LoggerFactory.getLogger(Logger.ROOT_LOGGER_NAME);
-    if (debug) {
-      root.setLevel(Level.DEBUG);
-    }
-    else {
-      root.setLevel(Level.INFO);
-    }
+    root.setLevel(Level.toLevel(logLevel));
   }
 
   /**
