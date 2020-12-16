@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019 Glencoe Software, Inc. All rights reserved.
+ * Copyright (c) 2019-2020 Glencoe Software, Inc. All rights reserved.
  *
  * This software is distributed under the terms described by the LICENSE.txt
  * file you can find at the root of the distribution bundle.  If the file is
@@ -23,7 +23,6 @@ import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 
 import org.janelia.saalfeldlab.n5.DataBlock;
-import org.janelia.saalfeldlab.n5.DatasetAttributes;
 import org.janelia.saalfeldlab.n5.N5FSReader;
 import org.janelia.saalfeldlab.n5.zarr.N5ZarrReader;
 
@@ -42,7 +41,6 @@ import loci.formats.FormatTools;
 import loci.formats.MetadataTools;
 import loci.formats.codec.CodecOptions;
 import loci.formats.ome.OMEPyramidStore;
-import loci.formats.out.TiffWriter;
 import loci.formats.services.OMEXMLService;
 import loci.formats.tiff.IFD;
 import loci.formats.tiff.IFDList;
@@ -88,21 +86,6 @@ import picocli.CommandLine.Parameters;
  * Any missing tiles are filled in with pixel values of 0 (black).
  */
 public class PyramidFromDirectoryWriter implements Callable<Void> {
-
-  static class CompressionTypes extends ArrayList<String> {
-    CompressionTypes() {
-      super(CompressionTypes.getCompressionTypes());
-    }
-
-    private static List<String> getCompressionTypes() {
-      try (TiffWriter v = new TiffWriter()) {
-        return Arrays.asList(v.getCompressionTypes());
-      }
-      catch (Exception e) {
-        return new ArrayList<String>();
-      }
-    }
-  }
 
   private static final long FIRST_IFD_OFFSET = 8;
 
@@ -185,61 +168,6 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
 
   private List<PyramidSeries> series = new ArrayList<PyramidSeries>();
 
-  private class PyramidSeries {
-    /** Path to series in N5/Zarr. */
-    String path;
-
-    int index = -1;
-
-    IFDList[] ifds;
-
-    /** FormatTools pixel type. */
-    Integer pixelType;
-
-    /** Number of resolutions. */
-    int numberOfResolutions;
-
-    boolean littleEndian = false;
-
-    int planeCount = 1;
-    int z = 1;
-    int c = 1;
-    int t = 1;
-    String dimensionOrder;
-    int[] dimensionLengths = new int[3];
-
-    boolean rgb = false;
-
-    /** Description of each resolution in the pyramid. */
-    List<ResolutionDescriptor> resolutions;
-  }
-
-  private class ResolutionDescriptor {
-    /** Path to resolution in N5/Zarr. */
-    String path;
-
-    /** Resolution index (0 = the original image). */
-    Integer resolutionNumber;
-
-    /** Image width at this resolution. */
-    Integer sizeX;
-
-    /** Image height at this resolution. */
-    Integer sizeY;
-
-    /** Tile width at this resolution. */
-    Integer tileSizeX;
-
-    /** Tile height at this resolution. */
-    Integer tileSizeY;
-
-    /** Number of tiles along X axis. */
-    Integer numberOfTilesX;
-
-    /** Number of tiles along Y axis. */
-    Integer numberOfTilesY;
-  }
-
   private N5FSReader n5Reader = null;
 
   /** Writer metadata. */
@@ -263,22 +191,11 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
   @Override
   public Void call() throws Exception {
     if (printVersion) {
-      String version = Optional.ofNullable(
-        this.getClass().getPackage().getImplementationVersion()
-        ).orElse("development");
-      System.out.println("Version = " + version);
-      System.out.println("Bio-Formats version = " + FormatTools.VERSION);
+      printVersion();
       return null;
     }
 
-    ch.qos.logback.classic.Logger root = (ch.qos.logback.classic.Logger)
-      LoggerFactory.getLogger(Logger.ROOT_LOGGER_NAME);
-    if (debug) {
-      root.setLevel(Level.DEBUG);
-    }
-    else {
-      root.setLevel(Level.INFO);
-    }
+    setupLogger();
 
     try {
       StopWatch t0 = new Slf4JStopWatch("initialize");
@@ -380,70 +297,6 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
   }
 
   /**
-   * Calculate image width and height for each resolution.
-   * Uses the first tile in the resolution to find the tile size.
-   *
-   * @param s current series
-   */
-  public void describePyramid(PyramidSeries s)
-    throws FormatException, IOException
-  {
-    LOG.info("Number of resolution levels: {}", s.numberOfResolutions);
-    s.resolutions = new ArrayList<ResolutionDescriptor>();
-    for (int resolution = 0; resolution < s.numberOfResolutions; resolution++) {
-      ResolutionDescriptor descriptor = new ResolutionDescriptor();
-      descriptor.resolutionNumber = resolution;
-      descriptor.path = s.path + "/" + resolution;
-
-      DatasetAttributes attrs = n5Reader.getDatasetAttributes(descriptor.path);
-      descriptor.sizeX = (int) attrs.getDimensions()[0];
-      descriptor.sizeY = (int) attrs.getDimensions()[1];
-      descriptor.tileSizeX = attrs.getBlockSize()[0];
-      descriptor.tileSizeY = attrs.getBlockSize()[1];
-      descriptor.numberOfTilesX =
-        getTileCount(descriptor.sizeX, descriptor.tileSizeX);
-      descriptor.numberOfTilesY =
-        getTileCount(descriptor.sizeY, descriptor.tileSizeY);
-
-      if (resolution == 0) {
-        // If we have image metadata available sanity check the dimensions
-        // against those in the underlying N5 pyramid
-        if (metadata.getImageCount() > 0) {
-          int sizeX =
-            metadata.getPixelsSizeX(s.index).getNumberValue().intValue();
-          int sizeY =
-            metadata.getPixelsSizeY(s.index).getNumberValue().intValue();
-          if (descriptor.sizeX != sizeX) {
-            throw new FormatException(String.format(
-                "Resolution %d dimension mismatch! metadata=%d pyramid=%d",
-                resolution, descriptor.sizeX, sizeX));
-          }
-          if (descriptor.sizeY != sizeY) {
-            throw new FormatException(String.format(
-                "Resolution %d dimension mismatch! metadata=%d pyramid=%d",
-                resolution, descriptor.sizeY, sizeY));
-          }
-        }
-
-        long[] lengths = attrs.getDimensions();
-        if (lengths.length != 5) {
-          throw new FormatException(String.format(
-            "Expected 5 dimensions in series %d, found %d",
-            s.index, lengths.length));
-        }
-        for (int i=2; i<lengths.length; i++) {
-          if ((int) lengths[i] != s.dimensionLengths[i - 2]) {
-            throw new FormatException(
-              "Dimension order mismatch in series " + s.index);
-          }
-        }
-      }
-
-      s.resolutions.add(descriptor);
-    }
-  }
-
-  /**
    * Calculate the number of series.
    *
    * @return number of series
@@ -473,14 +326,7 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
   public void initialize()
     throws FormatException, IOException, DependencyException
   {
-    Path zarr = inputDirectory.resolve("data.zarr");
-    if (Files.exists(zarr)) {
-      n5Reader = new N5ZarrReader(zarr.toString());
-    }
-    Path n5 = inputDirectory.resolve("data.n5");
-    if (Files.exists(n5)) {
-      n5Reader = new N5FSReader(n5.toString());
-    }
+    createN5Reader();
 
     if (n5Reader == null) {
       throw new FormatException("Could not create an N5 reader");
@@ -494,7 +340,6 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
     LOG.info("Creating tiled pyramid file {}", this.outputFilePath);
 
     OMEXMLService service = getService();
-    Hashtable<String, Object> originalMeta = new Hashtable<String, Object>();
     if (service != null) {
       Path omexml = getOMEXMLFile();
       String xml = null;
@@ -583,7 +428,7 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
         onlyChannel.setSamplesPerPixel(new PositiveInteger(s.c));
       }
 
-      describePyramid(s);
+      s.describePyramid(n5Reader, metadata);
 
       metadata.setTiffDataIFD(new NonNegativeInteger(totalPlanes), s.index, 0);
       metadata.setTiffDataPlaneCount(
@@ -620,15 +465,7 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
       totalPlanes += s.planeCount;
     }
 
-    Path metadataFile = getMetadataFile();
-    if (metadataFile != null && Files.exists(metadataFile)) {
-      String jsonMetadata = DataTools.readFile(metadataFile.toString());
-      JSONObject json = new JSONObject(jsonMetadata);
-
-      parseJSONValues(json, originalMeta, "");
-
-      service.populateOriginalMetadata(metadata, originalMeta);
-    }
+    populateOriginalMetadata(service);
 
     outStream = new RandomAccessOutputStream(outputFilePath.toString());
     writer = new TiffSaver(outStream, outputFilePath.toString());
@@ -637,24 +474,6 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
     // series with opposite endianness are logged above
     writer.setLittleEndian(series.get(0).littleEndian);
     writer.writeHeader();
-  }
-
-  private void parseJSONValues(JSONObject root,
-      Hashtable<String, Object> originalMeta, String prefix)
-  {
-    for (String key : root.keySet()) {
-      Object value = root.get(key);
-
-      if (value instanceof JSONObject) {
-        parseJSONValues(
-          (JSONObject) value, originalMeta,
-          prefix.isEmpty() ? key : prefix + " | " + key);
-      }
-      else {
-        originalMeta.put(prefix.isEmpty() ? key : prefix + " | " + key,
-          value.toString());
-      }
-    }
   }
 
    //* Conversion */
@@ -868,7 +687,8 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
     ifd.put(IFD.IMAGE_LENGTH, (long) descriptor.sizeY);
     ifd.put(IFD.TILE_WIDTH, descriptor.tileSizeX);
     ifd.put(IFD.TILE_LENGTH, descriptor.tileSizeY);
-    ifd.put(IFD.COMPRESSION, getTIFFCompression().getCode());
+    ifd.put(IFD.COMPRESSION,
+      CompressionTypes.getTIFFCompression(compression).getCode());
 
     ifd.put(IFD.PLANAR_CONFIGURATION, s.rgb ? 2 : 1);
 
@@ -895,6 +715,13 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
     }
     else {
       ifd.put(IFD.SOFTWARE, FormatTools.CREATOR);
+
+      if (resolution == 0) {
+        ifd.put(IFD.SUB_IFD, (long) 0);
+      }
+      else {
+        ifd.put(IFD.NEW_SUBFILE_TYPE, 1);
+      }
     }
 
     if (resolution == 0 && plane == 0) {
@@ -912,15 +739,6 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
       descriptor.numberOfTilesX * descriptor.numberOfTilesY * bps.length;
     ifd.put(IFD.TILE_BYTE_COUNTS, new long[tileCount]);
     ifd.put(IFD.TILE_OFFSETS, new long[tileCount]);
-
-    if (!legacy) {
-      if (resolution == 0) {
-        ifd.put(IFD.SUB_IFD, (long) 0);
-      }
-      else {
-        ifd.put(IFD.NEW_SUBFILE_TYPE, 1);
-      }
-    }
 
     ifd.put(IFD.RESOLUTION_UNIT, 3);
     ifd.put(IFD.X_RESOLUTION,
@@ -960,7 +778,8 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
       s.index, imageNumber, tileIndex);
 
     IFD ifd = s.ifds[resolution].get(imageNumber);
-    TiffCompression tiffCompression = getTIFFCompression();
+    TiffCompression tiffCompression =
+      CompressionTypes.getTIFFCompression(compression);
     CodecOptions options = tiffCompression.getCompressionCodecOptions(ifd);
 
     // buffer has been padded to full tile width before calling writeTile
@@ -1022,31 +841,6 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
   }
 
   /**
-   * Convert the compression argument to a TiffCompression object that can
-   * be used to compress tiles.
-   *
-   * @return TiffCompression corresponding to the compression argument,
-   */
-  private TiffCompression getTIFFCompression() {
-    if (compression.equals(TiffWriter.COMPRESSION_LZW)) {
-      return TiffCompression.LZW;
-    }
-    else if (compression.equals(TiffWriter.COMPRESSION_J2K)) {
-      return TiffCompression.JPEG_2000;
-    }
-    else if (compression.equals(TiffWriter.COMPRESSION_J2K_LOSSY)) {
-      return TiffCompression.JPEG_2000_LOSSY;
-    }
-    else if (compression.equals(TiffWriter.COMPRESSION_JPEG)) {
-      return TiffCompression.JPEG;
-    }
-    else if (compression.equals(TiffWriter.COMPRESSION_ZLIB)) {
-      return TiffCompression.DEFLATE;
-    }
-    return TiffCompression.UNCOMPRESSED;
-  }
-
-  /**
    * Write the IFD for the given resolution and plane.
    *
    * @param s current series
@@ -1067,14 +861,92 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
   }
 
   /**
-   * Calculate the number of tiles for a dimension based upon the tile size.
-   *
-   * @param size the number of pixels in the dimension (e.g. image width)
-   * @param tileSize the number of pixels in the tile along the same dimension
-   * @return the number of tiles
+   * Create an N5 reader for the chosen input directory.
+   * If the input directory contains "data.zarr", an N5ZarrReader is used.
+   * If the input directory contains "data.n5", an N5FSReader is used.
+   * If an appropriate reader cannot be found, the reader will remain null.
    */
-  private int getTileCount(long size, long tileSize) {
-    return (int) Math.ceil((double) size / tileSize);
+  private void createN5Reader() throws IOException {
+    Path zarr = inputDirectory.resolve("data.zarr");
+    if (Files.exists(zarr)) {
+      n5Reader = new N5ZarrReader(zarr.toString());
+    }
+    Path n5 = inputDirectory.resolve("data.n5");
+    if (Files.exists(n5)) {
+      n5Reader = new N5FSReader(n5.toString());
+    }
+  }
+
+  /**
+   * Set up the root logger, turning on debug logging if appropriate.
+   */
+  private void setupLogger() {
+    ch.qos.logback.classic.Logger root = (ch.qos.logback.classic.Logger)
+      LoggerFactory.getLogger(Logger.ROOT_LOGGER_NAME);
+    if (debug) {
+      root.setLevel(Level.DEBUG);
+    }
+    else {
+      root.setLevel(Level.INFO);
+    }
+  }
+
+  /**
+   * Print versions for raw2ometiff and associated Bio-Formats dependency.
+   */
+  private void printVersion() {
+    String version = Optional.ofNullable(
+      this.getClass().getPackage().getImplementationVersion()
+      ).orElse("development");
+    System.out.println("Version = " + version);
+    System.out.println("Bio-Formats version = " + FormatTools.VERSION);
+  }
+
+  /**
+   * Use the given service to create original metadata annotations
+   * based upon the dataset's JSON metadata file (if present).
+   *
+   * @param service to use for creating original metadata annotations
+   * @throws IOException
+   */
+  private void populateOriginalMetadata(OMEXMLService service)
+    throws IOException
+  {
+    Path metadataFile = getMetadataFile();
+    Hashtable<String, Object> originalMeta = new Hashtable<String, Object>();
+    if (metadataFile != null && Files.exists(metadataFile)) {
+      String jsonMetadata = DataTools.readFile(metadataFile.toString());
+      JSONObject json = new JSONObject(jsonMetadata);
+
+      parseJSONValues(json, originalMeta, "");
+
+      service.populateOriginalMetadata(metadata, originalMeta);
+    }
+  }
+
+  /**
+   * Translate JSON objects to a set of key/value pairs.
+   *
+   * @param root JSON object
+   * @param originalMeta hashtable to store key/value pairs
+   * @param prefix key prefix, used to preserve JSON hierarchy
+   */
+  private void parseJSONValues(JSONObject root,
+      Hashtable<String, Object> originalMeta, String prefix)
+  {
+    for (String key : root.keySet()) {
+      Object value = root.get(key);
+
+      if (value instanceof JSONObject) {
+        parseJSONValues(
+          (JSONObject) value, originalMeta,
+          prefix.isEmpty() ? key : prefix + " | " + key);
+      }
+      else {
+        originalMeta.put(prefix.isEmpty() ? key : prefix + " | " + key,
+          value.toString());
+      }
+    }
   }
 
 }
