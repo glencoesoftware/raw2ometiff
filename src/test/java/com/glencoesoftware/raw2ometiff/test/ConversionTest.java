@@ -92,8 +92,7 @@ public class ConversionTest {
       args.add(arg);
     }
     args.add(output.toString());
-    outputOmeTiff = Paths.get(
-      "/home/melissa/" + System.currentTimeMillis() + "-output.ome.tiff");
+    outputOmeTiff = output.resolve("output.ome.tiff");
     args.add(outputOmeTiff.toString());
     try {
       writer = new PyramidFromDirectoryWriter();

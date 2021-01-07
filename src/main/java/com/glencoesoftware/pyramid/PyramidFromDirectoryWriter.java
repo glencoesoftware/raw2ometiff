@@ -265,7 +265,8 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
     }
 
     int[] pos = FormatTools.rasterToPosition(s.dimensionLengths, no);
-    int[] gridPosition = new int[] {pos[2], pos[1], pos[0], y, x};
+    int[] gridPosition = new int[] {pos[2], pos[1], pos[0],
+      y * descriptor.tileSizeY, x * descriptor.tileSizeX};
     int[] shape = new int[] {1, 1, 1, realHeight, realWidth};
 
     ZarrArray block = reader.openArray(descriptor.path);
@@ -301,23 +302,7 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
       throw new IOException("Could not read from " + descriptor.path, e);
     }
 
-    int bpp = FormatTools.getBytesPerPixel(s.pixelType);
-    int tileSize = realWidth * realHeight * bpp;
-    boolean isPadded = tile.length > tileSize;
-
-    if (!isPadded) {
-      return tile;
-    }
-
-    byte[] trimmedTile = new byte[tileSize];
-    int rowLen = realWidth * bpp;
-    int fullRowLen = descriptor.tileSizeX * bpp;
-    for (int row=0; row<realHeight; row++) {
-      System.arraycopy(tile, row * fullRowLen,
-        trimmedTile, row * rowLen, rowLen);
-    }
-
-    return trimmedTile;
+    return tile;
   }
 
   /**
