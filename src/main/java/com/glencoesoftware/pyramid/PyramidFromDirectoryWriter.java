@@ -8,23 +8,19 @@
 package com.glencoesoftware.pyramid;
 
 import java.io.IOException;
-import java.nio.ByteBuffer;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Hashtable;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
-
-import org.janelia.saalfeldlab.n5.DataBlock;
-import org.janelia.saalfeldlab.n5.N5FSReader;
-import org.janelia.saalfeldlab.n5.zarr.N5ZarrReader;
 
 import ch.qos.logback.classic.Level;
 import org.slf4j.Logger;
@@ -60,6 +56,11 @@ import ome.xml.model.primitives.PositiveInteger;
 import org.json.JSONObject;
 import org.perf4j.StopWatch;
 import org.perf4j.slf4j.Slf4JStopWatch;
+
+//import com.bc.zarr.DataType;
+import com.bc.zarr.ZarrArray;
+import com.bc.zarr.ZarrGroup;
+import ucar.ma2.InvalidRangeException;
 
 import picocli.CommandLine;
 import picocli.CommandLine.Option;
@@ -168,7 +169,7 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
 
   private List<PyramidSeries> series = new ArrayList<PyramidSeries>();
 
-  private N5FSReader n5Reader = null;
+  private ZarrGroup reader = null;
 
   /** Writer metadata. */
   OMEPyramidStore metadata;
@@ -256,44 +257,67 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
       throws FormatException, IOException
   {
     ResolutionDescriptor descriptor = s.resolutions.get(resolution);
-    int bpp = FormatTools.getBytesPerPixel(s.pixelType);
-    int xy = descriptor.tileSizeX * descriptor.tileSizeY;
+    int realWidth = descriptor.tileSizeX;
+    int realHeight = descriptor.tileSizeY;
     if (region != null) {
-      xy = region.width * region.height;
+      realWidth = region.width;
+      realHeight = region.height;
     }
-    int tileSize = xy * bpp;
-    byte[] tile = new byte[tileSize];
 
     int[] pos = FormatTools.rasterToPosition(s.dimensionLengths, no);
-    long[] gridPosition = new long[] {x, y, pos[0], pos[1], pos[2]};
-    DataBlock<?> block = n5Reader.readBlock(
-      descriptor.path, n5Reader.getDatasetAttributes(descriptor.path),
-      gridPosition);
+    int[] gridPosition = new int[] {pos[2], pos[1], pos[0], y, x};
+    int[] shape = new int[] {1, 1, 1, realHeight, realWidth};
+
+    ZarrArray block = reader.openArray(descriptor.path);
 
     if (block == null) {
       throw new FormatException("Could not find block = " + descriptor.path +
         ", position = [" + pos[0] + ", " + pos[1] + ", " + pos[2] + "]");
     }
 
-    ByteBuffer buffer = block.toByteBuffer();
-    boolean isPadded = buffer.limit() > tileSize;
-    if (region == null || (region.width == descriptor.tileSizeX &&
-      region.height == descriptor.tileSizeY))
-    {
-      buffer.get(tile);
-    }
-    else {
-      int tilePos = 0;
-      for (int row=0; row<region.height; row++) {
-        buffer.get(tile, tilePos, region.width * bpp);
-        if (isPadded) {
-          buffer.position(buffer.position() +
-            (descriptor.tileSizeX - region.width) * bpp);
-        }
-        tilePos += region.width * bpp;
+    byte[] tile = null;
+    try {
+      Object bytes = block.read(shape, gridPosition);
+      if (bytes instanceof byte[]) {
+        tile = (byte[]) bytes;
+      }
+      else if (bytes instanceof short[]) {
+        tile = DataTools.shortsToBytes((short[]) bytes, s.littleEndian);
+      }
+      else if (bytes instanceof int[]) {
+        tile = DataTools.intsToBytes((int[]) bytes, s.littleEndian);
+      }
+      else if (bytes instanceof long[]) {
+        tile = DataTools.longsToBytes((long[]) bytes, s.littleEndian);
+      }
+      else if (bytes instanceof float[]) {
+        tile = DataTools.floatsToBytes((float[]) bytes, s.littleEndian);
+      }
+      else if (bytes instanceof double[]) {
+        tile = DataTools.doublesToBytes((double[]) bytes, s.littleEndian);
       }
     }
-    return tile;
+    catch (InvalidRangeException e) {
+      throw new IOException("Could not read from " + descriptor.path, e);
+    }
+
+    int bpp = FormatTools.getBytesPerPixel(s.pixelType);
+    int tileSize = realWidth * realHeight * bpp;
+    boolean isPadded = tile.length > tileSize;
+
+    if (!isPadded) {
+      return tile;
+    }
+
+    byte[] trimmedTile = new byte[tileSize];
+    int rowLen = realWidth * bpp;
+    int fullRowLen = descriptor.tileSizeX * bpp;
+    for (int row=0; row<realHeight; row++) {
+      System.arraycopy(tile, row * fullRowLen,
+        trimmedTile, row * rowLen, rowLen);
+    }
+
+    return trimmedTile;
   }
 
   /**
@@ -302,7 +326,7 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
    * @return number of series
    */
   private int getSeriesCount() throws IOException {
-    return n5Reader.list("/").length;
+    return reader.getGroupKeys().size();
   }
 
   /**
@@ -312,11 +336,13 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
    * @param s current series
    */
   private void findNumberOfResolutions(PyramidSeries s) throws IOException {
-    s.path = "/" + s.index;
-    if (!n5Reader.exists(s.path)) {
+    s.path = String.valueOf(s.index);
+    ZarrGroup seriesGroup =
+      ZarrGroup.open(inputDirectory.resolve("data.zarr/" + s.path).toString());
+    if (seriesGroup == null) {
       throw new IOException("Expected series " + s.index + " not found");
     }
-    s.numberOfResolutions = n5Reader.list(s.path).length;
+    s.numberOfResolutions = seriesGroup.getArrayKeys().size();
   }
 
   /**
@@ -326,13 +352,14 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
   public void initialize()
     throws FormatException, IOException, DependencyException
   {
-    createN5Reader();
+    createReader();
 
-    if (n5Reader == null) {
-      throw new FormatException("Could not create an N5 reader");
+    if (reader == null) {
+      throw new FormatException("Could not create a reader");
     }
-    Integer layoutVersion =
-      n5Reader.getAttribute("/", "bioformats2raw.layout", Integer.class);
+
+    Map<String, Object> attributes = reader.getAttributes();
+    Integer layoutVersion = (Integer) attributes.get("bioformats2raw.layout");
     if (layoutVersion == null || layoutVersion != 1) {
       throw new FormatException("Unsupported version: " + layoutVersion);
     }
@@ -389,11 +416,8 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
         metadata.getPixelsDimensionOrder(seriesIndex).toString();
       s.planeCount = s.z * s.t;
 
-      // N5 format only allows big endian data
-      // Zarr format allows both
-      if (n5Reader instanceof N5ZarrReader) {
-        s.littleEndian = !metadata.getPixelsBigEndian(seriesIndex);
-      }
+      // Zarr format allows both little and big endian order
+      s.littleEndian = !metadata.getPixelsBigEndian(seriesIndex);
 
       s.pixelType = FormatTools.pixelTypeFromString(
             metadata.getPixelsType(seriesIndex).getValue());
@@ -428,7 +452,7 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
         onlyChannel.setSamplesPerPixel(new PositiveInteger(s.c));
       }
 
-      s.describePyramid(n5Reader, metadata);
+      s.describePyramid(reader, metadata);
 
       metadata.setTiffDataIFD(new NonNegativeInteger(totalPlanes), s.index, 0);
       metadata.setTiffDataPlaneCount(
@@ -861,19 +885,14 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
   }
 
   /**
-   * Create an N5 reader for the chosen input directory.
-   * If the input directory contains "data.zarr", an N5ZarrReader is used.
-   * If the input directory contains "data.n5", an N5FSReader is used.
+   * Create a reader for the chosen input directory.
+   * If the input directory contains "data.zarr", a Zarr reader is used.
    * If an appropriate reader cannot be found, the reader will remain null.
    */
-  private void createN5Reader() throws IOException {
+  private void createReader() throws IOException {
     Path zarr = inputDirectory.resolve("data.zarr");
     if (Files.exists(zarr)) {
-      n5Reader = new N5ZarrReader(zarr.toString());
-    }
-    Path n5 = inputDirectory.resolve("data.n5");
-    if (Files.exists(n5)) {
-      n5Reader = new N5FSReader(n5.toString());
+      reader = ZarrGroup.open(zarr.toString());
     }
   }
 

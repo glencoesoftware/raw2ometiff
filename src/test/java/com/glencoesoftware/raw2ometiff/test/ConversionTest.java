@@ -58,6 +58,8 @@ public class ConversionTest {
    */
   void assertBioFormats2Raw(String...additionalArgs) throws IOException {
     List<String> args = new ArrayList<String>();
+    args.add("--file_type");
+    args.add("zarr");
     for (String arg : additionalArgs) {
       args.add(arg);
     }
@@ -67,7 +69,7 @@ public class ConversionTest {
     try {
       converter = new Converter();
       CommandLine.call(converter, args.toArray(new String[]{}));
-      Assert.assertTrue(Files.exists(output.resolve("data.n5")));
+      Assert.assertTrue(Files.exists(output.resolve("data.zarr")));
       Assert.assertTrue(Files.exists(output.resolve("METADATA.ome.xml")));
     }
     catch (RuntimeException rt) {
@@ -90,7 +92,8 @@ public class ConversionTest {
       args.add(arg);
     }
     args.add(output.toString());
-    outputOmeTiff = output.resolve("output.ome.tiff");
+    outputOmeTiff = Paths.get(
+      "/home/melissa/" + System.currentTimeMillis() + "-output.ome.tiff");
     args.add(outputOmeTiff.toString());
     try {
       writer = new PyramidFromDirectoryWriter();

@@ -13,17 +13,18 @@ import java.util.List;
 import loci.formats.FormatException;
 import loci.formats.ome.OMEPyramidStore;
 import loci.formats.tiff.IFDList;
-import org.janelia.saalfeldlab.n5.DatasetAttributes;
-import org.janelia.saalfeldlab.n5.N5FSReader;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+
+import com.bc.zarr.ZarrArray;
+import com.bc.zarr.ZarrGroup;
 
 public class PyramidSeries {
 
   private static final Logger LOG =
     LoggerFactory.getLogger(PyramidSeries.class);
 
-  /** Path to series in N5/Zarr. */
+  /** Path to series. */
   String path;
 
   int index = -1;
@@ -54,10 +55,10 @@ public class PyramidSeries {
    * Calculate image width and height for each resolution.
    * Uses the first tile in the resolution to find the tile size.
    *
-   * @param n5Reader reader used to get dataset attributes
+   * @param reader reader used to get dataset attributes
    * @param metadata additional OME-XML metadata
    */
-  public void describePyramid(N5FSReader n5Reader, OMEPyramidStore metadata)
+  public void describePyramid(ZarrGroup reader, OMEPyramidStore metadata)
     throws FormatException, IOException
   {
     LOG.info("Number of resolution levels: {}", numberOfResolutions);
@@ -67,11 +68,14 @@ public class PyramidSeries {
       descriptor.resolutionNumber = resolution;
       descriptor.path = path + "/" + resolution;
 
-      DatasetAttributes attrs = n5Reader.getDatasetAttributes(descriptor.path);
-      descriptor.sizeX = (int) attrs.getDimensions()[0];
-      descriptor.sizeY = (int) attrs.getDimensions()[1];
-      descriptor.tileSizeX = attrs.getBlockSize()[0];
-      descriptor.tileSizeY = attrs.getBlockSize()[1];
+      ZarrArray array = reader.openArray(descriptor.path);
+      int[] dimensions = array.getShape();
+      int[] blockSizes = array.getChunks();
+
+      descriptor.sizeX = dimensions[dimensions.length - 1];
+      descriptor.sizeY = dimensions[dimensions.length - 2];
+      descriptor.tileSizeX = blockSizes[blockSizes.length - 1];
+      descriptor.tileSizeY = blockSizes[blockSizes.length - 2];
       descriptor.numberOfTilesX =
         getTileCount(descriptor.sizeX, descriptor.tileSizeX);
       descriptor.numberOfTilesY =
@@ -79,7 +83,7 @@ public class PyramidSeries {
 
       if (resolution == 0) {
         // If we have image metadata available sanity check the dimensions
-        // against those in the underlying N5 pyramid
+        // against those in the underlying pyramid
         if (metadata.getImageCount() > 0) {
           int sizeX =
             metadata.getPixelsSizeX(index).getNumberValue().intValue();
@@ -97,14 +101,13 @@ public class PyramidSeries {
           }
         }
 
-        long[] lengths = attrs.getDimensions();
-        if (lengths.length != 5) {
+        if (dimensions.length != 5) {
           throw new FormatException(String.format(
             "Expected 5 dimensions in series %d, found %d",
-            index, lengths.length));
+            index, dimensions.length));
         }
-        for (int i=2; i<lengths.length; i++) {
-          if ((int) lengths[i] != dimensionLengths[i - 2]) {
+        for (int i=0; i<dimensions.length-2; i++) {
+          if (dimensions[i] != dimensionLengths[2 - i]) {
             throw new FormatException(
               "Dimension order mismatch in series " + index);
           }

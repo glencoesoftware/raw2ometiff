@@ -8,7 +8,7 @@
 package com.glencoesoftware.pyramid;
 
 public class ResolutionDescriptor {
-  /** Path to resolution in N5/Zarr. */
+  /** Path to resolution. */
   String path;
 
   /** Resolution index (0 = the original image). */
