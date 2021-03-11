@@ -30,6 +30,7 @@ repositories {
 
 dependencies {
     implementation 'info.picocli:picocli:4.2.0'
+    implementation 'me.tongfei:progressbar:0.9.0'
     implementation 'ome:formats-bsd:6.4.0'
     // be careful here, this is a newer version of org.json:json than formats-gpl uses
     implementation 'org.json:json:20190722'
