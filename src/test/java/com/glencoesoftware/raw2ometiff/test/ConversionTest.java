@@ -69,8 +69,9 @@ public class ConversionTest {
     try {
       converter = new Converter();
       CommandLine.call(converter, args.toArray(new String[]{}));
-      Assert.assertTrue(Files.exists(output.resolve("data.zarr")));
-      Assert.assertTrue(Files.exists(output.resolve("METADATA.ome.xml")));
+      Path zarr = output.resolve("data.zarr");
+      Assert.assertTrue(Files.exists(zarr));
+      Assert.assertTrue(Files.exists(zarr.resolve("METADATA.ome.xml")));
     }
     catch (RuntimeException rt) {
       throw rt;

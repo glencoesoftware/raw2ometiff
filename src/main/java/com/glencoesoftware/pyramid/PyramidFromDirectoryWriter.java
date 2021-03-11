@@ -96,6 +96,9 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
   /** Name of OME-XML metadata file. */
   private static final String OMEXML_FILE = "METADATA.ome.xml";
 
+  /** Name of root Zarr directory. */
+  private static final String ZARR = "data.zarr";
+
   private static final Logger LOG =
     LoggerFactory.getLogger(PyramidFromDirectoryWriter.class);
 
@@ -237,7 +240,16 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
    * @return Path representing the expected OME-XML metadata file
    */
   private Path getOMEXMLFile() {
-    return inputDirectory.resolve(OMEXML_FILE);
+    return getZarr().resolve(OMEXML_FILE);
+  }
+
+  /**
+   * Get the root Zarr directory.
+   *
+   * @return Path representing the root Zarr directory
+   */
+  private Path getZarr() {
+    return inputDirectory.resolve(ZARR);
   }
 
   /**
@@ -323,7 +335,7 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
   private void findNumberOfResolutions(PyramidSeries s) throws IOException {
     s.path = String.valueOf(s.index);
     ZarrGroup seriesGroup =
-      ZarrGroup.open(inputDirectory.resolve("data.zarr/" + s.path).toString());
+      ZarrGroup.open(getZarr().resolve(s.path).toString());
     if (seriesGroup == null) {
       throw new IOException("Expected series " + s.index + " not found");
     }
@@ -875,7 +887,7 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
    * If an appropriate reader cannot be found, the reader will remain null.
    */
   private void createReader() throws IOException {
-    Path zarr = inputDirectory.resolve("data.zarr");
+    Path zarr = getZarr();
     if (Files.exists(zarr)) {
       reader = ZarrGroup.open(zarr.toString());
     }
