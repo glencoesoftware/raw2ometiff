@@ -23,6 +23,9 @@ import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 
 import ch.qos.logback.classic.Level;
+import me.tongfei.progressbar.DelegatingProgressBarConsumer;
+import me.tongfei.progressbar.ProgressBar;
+import me.tongfei.progressbar.ProgressBarBuilder;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -123,10 +126,21 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
   Path inputDirectory;
 
   @Option(
-      names = "--debug",
-      description = "Turn on debug logging"
+    names = {"--log-level", "--debug"},
+    arity = "0..1",
+    description = "Change logging level; valid values are " +
+      "OFF, ERROR, WARN, INFO, DEBUG, TRACE and ALL. " +
+      "(default: ${DEFAULT-VALUE})",
+    fallbackValue = "DEBUG"
   )
-  boolean debug = false;
+  private volatile String logLevel = "WARN";
+
+  @Option(
+    names = {"-p", "--progress"},
+    description = "Print progress bars during conversion",
+    help = true
+  )
+  private volatile boolean progressBars = false;
 
   @Option(
       names = "--version",
@@ -526,6 +540,26 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
         LOG.info("Converting resolution #{}", resolution);
         ResolutionDescriptor descriptor = s.resolutions.get(resolution);
         int tileCount = descriptor.numberOfTilesY * descriptor.numberOfTilesX;
+
+        final ProgressBar pb;
+        if (progressBars) {
+          ProgressBarBuilder builder = new ProgressBarBuilder()
+            .setInitialMax(tileCount)
+            .setTaskName(String.format("[%d/%d]", s.index, resolution));
+
+          if (!(logLevel.equals("OFF") ||
+            logLevel.equals("ERROR") ||
+            logLevel.equals("WARN")))
+          {
+            builder.setConsumer(new DelegatingProgressBarConsumer(LOG::trace));
+          }
+
+          pb = builder.build();
+        }
+        else {
+          pb = null;
+        }
+
         for (int plane=0; plane<s.planeCount; plane++) {
           int tileIndex = 0;
           // if the resolution has already been calculated,
@@ -592,12 +626,20 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
                   }
                   finally {
                     t1.stop();
+                    if (pb != null) {
+                      pb.step();
+                    }
                   }
                 });
               }
             }
           }
         }
+
+        if (pb != null) {
+          pb.close();
+        }
+
       }
     }
     finally {
@@ -887,12 +929,7 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
   private void setupLogger() {
     ch.qos.logback.classic.Logger root = (ch.qos.logback.classic.Logger)
       LoggerFactory.getLogger(Logger.ROOT_LOGGER_NAME);
-    if (debug) {
-      root.setLevel(Level.DEBUG);
-    }
-    else {
-      root.setLevel(Level.INFO);
-    }
+    root.setLevel(Level.toLevel(logLevel));
   }
 
   /**
