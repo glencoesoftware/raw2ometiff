@@ -8,7 +8,6 @@
 package com.glencoesoftware.pyramid;
 
 import java.io.IOException;
-import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -25,14 +24,10 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 
-import org.janelia.saalfeldlab.n5.DataBlock;
-import org.janelia.saalfeldlab.n5.DatasetAttributes;
-import org.janelia.saalfeldlab.n5.DataType;
-import org.janelia.saalfeldlab.n5.N5FSReader;
-import org.janelia.saalfeldlab.n5.zarr.N5ZarrReader;
-import org.janelia.saalfeldlab.n5.zarr.ZarrDatasetAttributes;
-
 import ch.qos.logback.classic.Level;
+import me.tongfei.progressbar.DelegatingProgressBarConsumer;
+import me.tongfei.progressbar.ProgressBar;
+import me.tongfei.progressbar.ProgressBarBuilder;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -69,6 +64,11 @@ import ome.xml.model.primitives.PositiveInteger;
 import org.json.JSONObject;
 import org.perf4j.StopWatch;
 import org.perf4j.slf4j.Slf4JStopWatch;
+
+import com.bc.zarr.DataType;
+import com.bc.zarr.ZarrArray;
+import com.bc.zarr.ZarrGroup;
+import ucar.ma2.InvalidRangeException;
 
 import picocli.CommandLine;
 import picocli.CommandLine.Option;
@@ -131,10 +131,21 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
   Path inputDirectory;
 
   @Option(
-      names = "--debug",
-      description = "Turn on debug logging"
+    names = {"--log-level", "--debug"},
+    arity = "0..1",
+    description = "Change logging level; valid values are " +
+      "OFF, ERROR, WARN, INFO, DEBUG, TRACE and ALL. " +
+      "(default: ${DEFAULT-VALUE})",
+    fallbackValue = "DEBUG"
   )
-  boolean debug = false;
+  private volatile String logLevel = "WARN";
+
+  @Option(
+    names = {"-p", "--progress"},
+    description = "Print progress bars during conversion",
+    help = true
+  )
+  private volatile boolean progressBars = false;
 
   @Option(
       names = "--version",
@@ -177,7 +188,7 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
 
   private List<PyramidSeries> series = new ArrayList<PyramidSeries>();
 
-  private N5FSReader n5Reader = null;
+  private ZarrGroup reader = null;
 
   /** Writer metadata. */
   OMEPyramidStore metadata;
@@ -267,43 +278,51 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
       throws FormatException, IOException
   {
     ResolutionDescriptor descriptor = s.resolutions.get(resolution);
-    int bpp = FormatTools.getBytesPerPixel(s.pixelType);
-    int xy = descriptor.tileSizeX * descriptor.tileSizeY;
+    int realWidth = descriptor.tileSizeX;
+    int realHeight = descriptor.tileSizeY;
     if (region != null) {
-      xy = region.width * region.height;
+      realWidth = region.width;
+      realHeight = region.height;
     }
-    int tileSize = xy * bpp;
-    byte[] tile = new byte[tileSize];
 
     int[] pos = FormatTools.rasterToPosition(s.dimensionLengths, no);
-    long[] gridPosition = new long[] {x, y, pos[0], pos[1], pos[2]};
-    DataBlock<?> block = n5Reader.readBlock(
-      descriptor.path, n5Reader.getDatasetAttributes(descriptor.path),
-      gridPosition);
+    int[] gridPosition = new int[] {pos[2], pos[1], pos[0],
+      y * descriptor.tileSizeY, x * descriptor.tileSizeX};
+    int[] shape = new int[] {1, 1, 1, realHeight, realWidth};
+
+    ZarrArray block = reader.openArray(descriptor.path);
 
     if (block == null) {
       throw new FormatException("Could not find block = " + descriptor.path +
         ", position = [" + pos[0] + ", " + pos[1] + ", " + pos[2] + "]");
     }
 
-    ByteBuffer buffer = block.toByteBuffer();
-    boolean isPadded = buffer.limit() > tileSize;
-    if (region == null || (region.width == descriptor.tileSizeX &&
-      region.height == descriptor.tileSizeY))
-    {
-      buffer.get(tile);
-    }
-    else {
-      int tilePos = 0;
-      for (int row=0; row<region.height; row++) {
-        buffer.get(tile, tilePos, region.width * bpp);
-        if (isPadded) {
-          buffer.position(buffer.position() +
-            (descriptor.tileSizeX - region.width) * bpp);
-        }
-        tilePos += region.width * bpp;
+    byte[] tile = null;
+    try {
+      Object bytes = block.read(shape, gridPosition);
+      if (bytes instanceof byte[]) {
+        tile = (byte[]) bytes;
+      }
+      else if (bytes instanceof short[]) {
+        tile = DataTools.shortsToBytes((short[]) bytes, s.littleEndian);
+      }
+      else if (bytes instanceof int[]) {
+        tile = DataTools.intsToBytes((int[]) bytes, s.littleEndian);
+      }
+      else if (bytes instanceof long[]) {
+        tile = DataTools.longsToBytes((long[]) bytes, s.littleEndian);
+      }
+      else if (bytes instanceof float[]) {
+        tile = DataTools.floatsToBytes((float[]) bytes, s.littleEndian);
+      }
+      else if (bytes instanceof double[]) {
+        tile = DataTools.doublesToBytes((double[]) bytes, s.littleEndian);
       }
     }
+    catch (InvalidRangeException e) {
+      throw new IOException("Could not read from " + descriptor.path, e);
+    }
+
     return tile;
   }
 
@@ -359,8 +378,10 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
         metadata.setWellRow(
           new NonNegativeInteger(rowLookup.get(path[path.length - 2])), 0, i);
 
+        ZarrGroup wellGroup = getZarrGroup(well);
+
         Map<String, Object> wellAttr =
-          n5Reader.getAttribute(well, "well", Map.class);
+          (Map<String, Object>) wellGroup.getAttributes().get("well");
         List<Map<String, Object>> images =
           (List<Map<String, Object>>) wellAttr.get("images");
         for (int img=0; img<images.size(); img++) {
@@ -386,35 +407,28 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
           String imgPath = well + "/" + imgName;
           metadata.setImageName(imgName, wsIndex);
 
-          // append resolution index
-          imgPath += "/0";
-
-          DatasetAttributes dataset = n5Reader.getDatasetAttributes(imgPath);
-          long[] dims = dataset.getDimensions();
+          ZarrGroup imgGroup = getZarrGroup(imgPath);
+          ZarrArray imgArray = imgGroup.openArray("0");
+          int[] dims = imgArray.getShape();
 
           String order = "XYZCT";
-          int c = (int) dims[order.indexOf("C")];
-          PixelType type = getPixelType(dataset.getDataType());
+          int cIndex = order.length() - order.indexOf("C") - 1;
+          int zIndex = order.length() - order.indexOf("Z") - 1;
+          int tIndex = order.length() - order.indexOf("T") - 1;
+          int c = dims[cIndex];
+          PixelType type = getPixelType(imgArray.getDataType());
 
-          // N5 format only allows big endian data
-          // Zarr format allows both
-
-          boolean bigEndian = true;
-          if (dataset instanceof ZarrDatasetAttributes) {
-            ZarrDatasetAttributes zarrDataset = (ZarrDatasetAttributes) dataset;
-            bigEndian =
-              zarrDataset.getDType().getOrder() == ByteOrder.BIG_ENDIAN;
-          }
+          boolean bigEndian = imgArray.getByteOrder() == ByteOrder.BIG_ENDIAN;
 
           metadata.setPixelsBigEndian(bigEndian, wsIndex);
           metadata.setPixelsType(type, wsIndex);
-          metadata.setPixelsSizeX(new PositiveInteger((int) dims[0]), wsIndex);
-          metadata.setPixelsSizeY(new PositiveInteger((int) dims[1]), wsIndex);
-          metadata.setPixelsSizeZ(
-            new PositiveInteger((int) dims[order.indexOf("Z")]), wsIndex);
+          metadata.setPixelsSizeX(
+            new PositiveInteger(dims[dims.length - 1]), wsIndex);
+          metadata.setPixelsSizeY(
+            new PositiveInteger(dims[dims.length - 2]), wsIndex);
+          metadata.setPixelsSizeZ(new PositiveInteger(dims[zIndex]), wsIndex);
           metadata.setPixelsSizeC(new PositiveInteger(c), wsIndex);
-          metadata.setPixelsSizeT(
-            new PositiveInteger((int) dims[order.indexOf("T")]), wsIndex);
+          metadata.setPixelsSizeT(new PositiveInteger(dims[tIndex]), wsIndex);
           try {
             metadata.setPixelsDimensionOrder(
               DimensionOrder.fromString(order), wsIndex);
@@ -438,25 +452,34 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
 
   private PixelType getPixelType(DataType type) {
     switch (type) {
-      case INT8:
+      case i1:
         return PixelType.INT8;
-      case UINT8:
+      case u1:
         return PixelType.UINT8;
-      case INT16:
+      case i2:
         return PixelType.INT16;
-      case UINT16:
+      case u2:
         return PixelType.UINT16;
-      case INT32:
+      case i4:
         return PixelType.INT32;
-      case UINT32:
+      case u4:
         return PixelType.UINT32;
-      case FLOAT32:
+      case f4:
         return PixelType.FLOAT;
-      case FLOAT64:
+      case f8:
         return PixelType.DOUBLE;
       default:
         throw new IllegalArgumentException("Unsupported pixel type: " + type);
     }
+  }
+
+  private ZarrGroup getZarrGroup(String path) throws IOException {
+    return ZarrGroup.open(
+      inputDirectory.resolve("data.zarr/" + path).toString());
+  }
+
+  private int getSubgroupCount(String path) throws IOException {
+    return getZarrGroup(path).getGroupKeys().size();
   }
 
   /**
@@ -470,11 +493,11 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
       List<Map<String, Object>> wells =
         (List<Map<String, Object>>) plateData.get("wells");
       for (Map<String, Object> well : wells) {
-        count += n5Reader.list((String) well.get("path")).length;
+        count += getSubgroupCount((String) well.get("path"));
       }
       return count;
     }
-    return n5Reader.list("/").length;
+    return reader.getGroupKeys().size();
   }
 
   /**
@@ -489,7 +512,7 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
         (List<Map<String, Object>>) plateData.get("wells");
       int index = 0;
       for (Map<String, Object> well : wells) {
-        int fields = n5Reader.list((String) well.get("path")).length;
+        int fields = getSubgroupCount((String) well.get("path"));
         if (index + fields > s.index) {
           s.path = well.get("path") + "/" + (s.index - index);
           break;
@@ -498,19 +521,21 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
       }
     }
     else {
-      s.path = "/" + s.index;
+      s.path = String.valueOf(s.index);
     }
-    if (!n5Reader.exists(s.path)) {
-      throw new IOException("Expected series " + s.index +
-        " (" + s.path + ") not found");
+
+    ZarrGroup seriesGroup = getZarrGroup(s.path);
+    if (seriesGroup == null) {
+      throw new IOException("Expected series " + s.index + " not found");
     }
 
     // use multiscales metadata if it exists, to distinguish between
     // resolutions and labels
     // if no multiscales metadata (older dataset?), assume no labels
     // and just use the path listing length
+    Map<String, Object> seriesAttributes = seriesGroup.getAttributes();
     List<Map<String, Object>> multiscales =
-      n5Reader.getAttribute(s.path, "multiscales", List.class);
+      (List<Map<String, Object>>) seriesAttributes.get("multiscales");
     if (multiscales != null && multiscales.size() > 0) {
       List<Map<String, Object>> datasets =
         (List<Map<String, Object>>) multiscales.get(0).get("datasets");
@@ -520,7 +545,7 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
     }
 
     if (s.numberOfResolutions == 0) {
-      s.numberOfResolutions = n5Reader.list(s.path).length;
+      s.numberOfResolutions = seriesGroup.getArrayKeys().size();
     }
   }
 
@@ -531,13 +556,14 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
   public void initialize()
     throws FormatException, IOException, DependencyException
   {
-    createN5Reader();
+    createReader();
 
-    if (n5Reader == null) {
-      throw new FormatException("Could not create an N5 reader");
+    if (reader == null) {
+      throw new FormatException("Could not create a reader");
     }
-    Integer layoutVersion =
-      n5Reader.getAttribute("/", "bioformats2raw.layout", Integer.class);
+
+    Map<String, Object> attributes = reader.getAttributes();
+    Integer layoutVersion = (Integer) attributes.get("bioformats2raw.layout");
     if (layoutVersion == null) {
       LOG.warn("Layout version not recorded; may be unsupported");
     }
@@ -545,7 +571,7 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
       throw new FormatException("Unsupported version: " + layoutVersion);
     }
 
-    plateData = n5Reader.getAttribute("/", "plate", Map.class);
+    plateData = (Map<String, Object>) attributes.get("plate");
 
     LOG.info("Creating tiled pyramid file {}", this.outputFilePath);
 
@@ -600,11 +626,8 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
         metadata.getPixelsDimensionOrder(seriesIndex).toString();
       s.planeCount = s.z * s.t;
 
-      // N5 format only allows big endian data
-      // Zarr format allows both
-      if (n5Reader instanceof N5ZarrReader) {
-        s.littleEndian = !metadata.getPixelsBigEndian(seriesIndex);
-      }
+      // Zarr format allows both little and big endian order
+      s.littleEndian = !metadata.getPixelsBigEndian(seriesIndex);
 
       s.pixelType = FormatTools.pixelTypeFromString(
             metadata.getPixelsType(seriesIndex).getValue());
@@ -639,7 +662,7 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
         onlyChannel.setSamplesPerPixel(new PositiveInteger(s.c));
       }
 
-      s.describePyramid(n5Reader, metadata);
+      s.describePyramid(reader, metadata);
 
       metadata.setTiffDataIFD(new NonNegativeInteger(totalPlanes), s.index, 0);
       metadata.setTiffDataPlaneCount(
@@ -728,6 +751,26 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
         LOG.info("Converting resolution #{}", resolution);
         ResolutionDescriptor descriptor = s.resolutions.get(resolution);
         int tileCount = descriptor.numberOfTilesY * descriptor.numberOfTilesX;
+
+        final ProgressBar pb;
+        if (progressBars) {
+          ProgressBarBuilder builder = new ProgressBarBuilder()
+            .setInitialMax(tileCount)
+            .setTaskName(String.format("[%d/%d]", s.index, resolution));
+
+          if (!(logLevel.equals("OFF") ||
+            logLevel.equals("ERROR") ||
+            logLevel.equals("WARN")))
+          {
+            builder.setConsumer(new DelegatingProgressBarConsumer(LOG::trace));
+          }
+
+          pb = builder.build();
+        }
+        else {
+          pb = null;
+        }
+
         for (int plane=0; plane<s.planeCount; plane++) {
           int tileIndex = 0;
           // if the resolution has already been calculated,
@@ -794,12 +837,20 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
                   }
                   finally {
                     t1.stop();
+                    if (pb != null) {
+                      pb.step();
+                    }
                   }
                 });
               }
             }
           }
         }
+
+        if (pb != null) {
+          pb.close();
+        }
+
       }
     }
     finally {
@@ -1072,28 +1123,14 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
   }
 
   /**
-   * Create an N5 reader for the chosen input directory.
-   * If the input directory contains "data.zarr", an N5ZarrReader is used.
-   * If the input directory contains "data.n5", an N5FSReader is used.
+   * Create a reader for the chosen input directory.
+   * If the input directory contains "data.zarr", a Zarr reader is used.
    * If an appropriate reader cannot be found, the reader will remain null.
    */
-  private void createN5Reader() throws IOException {
+  private void createReader() throws IOException {
     Path zarr = inputDirectory.resolve("data.zarr");
     if (Files.exists(zarr)) {
-      n5Reader = new N5ZarrReader(zarr.toString());
-    }
-    Path n5 = inputDirectory.resolve("data.n5");
-    if (Files.exists(n5)) {
-      n5Reader = new N5FSReader(n5.toString());
-    }
-
-    if (n5Reader == null) {
-      if (inputDirectory.toString().endsWith(".zarr")) {
-        n5Reader = new N5ZarrReader(inputDirectory.toString());
-      }
-      else if (inputDirectory.toString().endsWith(".n5")) {
-        n5Reader = new N5FSReader(inputDirectory.toString());
-      }
+      reader = ZarrGroup.open(zarr.toString());
     }
   }
 
@@ -1103,12 +1140,7 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
   private void setupLogger() {
     ch.qos.logback.classic.Logger root = (ch.qos.logback.classic.Logger)
       LoggerFactory.getLogger(Logger.ROOT_LOGGER_NAME);
-    if (debug) {
-      root.setLevel(Level.DEBUG);
-    }
-    else {
-      root.setLevel(Level.INFO);
-    }
+    root.setLevel(Level.toLevel(logLevel));
   }
 
   /**
