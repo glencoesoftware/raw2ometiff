@@ -58,8 +58,6 @@ public class ConversionTest {
    */
   void assertBioFormats2Raw(String...additionalArgs) throws IOException {
     List<String> args = new ArrayList<String>();
-    args.add("--file_type");
-    args.add("zarr");
     for (String arg : additionalArgs) {
       args.add(arg);
     }
