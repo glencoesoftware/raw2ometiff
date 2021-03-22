@@ -39,7 +39,7 @@ dependencies {
     // be careful here, this is a newer version of org.json:json than formats-gpl uses
     implementation 'org.json:json:20190722'
     testImplementation 'junit:junit:4.12'
-    testImplementation 'com.glencoesoftware:bioformats2raw:0.2.3-SNAPSHOT'
+    testImplementation 'com.glencoesoftware:bioformats2raw:0.3.0-SNAPSHOT'
 }
 
 test {
