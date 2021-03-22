@@ -358,4 +358,16 @@ public class ConversionTest {
     }
   }
 
+  /**
+   * Test small plate.
+   */
+  @Test
+  public void testPlate() throws Exception {
+    input =
+      fake("plateRows", "2", "plateCols", "3", "fields", "4", "sizeC", "3");
+    assertBioFormats2Raw();
+    assertTool();
+    iteratePixels();
+  }
+
 }

@@ -8,10 +8,12 @@
 package com.glencoesoftware.pyramid;
 
 import java.io.IOException;
+import java.nio.ByteOrder;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.HashMap;
 import java.util.Hashtable;
 import java.util.List;
 import java.util.Map;
@@ -23,6 +25,9 @@ import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 
 import ch.qos.logback.classic.Level;
+import me.tongfei.progressbar.DelegatingProgressBarConsumer;
+import me.tongfei.progressbar.ProgressBar;
+import me.tongfei.progressbar.ProgressBarBuilder;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -50,6 +55,9 @@ import ome.units.quantity.Length;
 import ome.xml.meta.OMEXMLMetadataRoot;
 import ome.xml.model.Channel;
 import ome.xml.model.Pixels;
+import ome.xml.model.enums.DimensionOrder;
+import ome.xml.model.enums.EnumerationException;
+import ome.xml.model.enums.PixelType;
 import ome.xml.model.primitives.NonNegativeInteger;
 import ome.xml.model.primitives.PositiveInteger;
 
@@ -57,7 +65,7 @@ import org.json.JSONObject;
 import org.perf4j.StopWatch;
 import org.perf4j.slf4j.Slf4JStopWatch;
 
-//import com.bc.zarr.DataType;
+import com.bc.zarr.DataType;
 import com.bc.zarr.ZarrArray;
 import com.bc.zarr.ZarrGroup;
 import ucar.ma2.InvalidRangeException;
@@ -126,10 +134,21 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
   Path inputDirectory;
 
   @Option(
-      names = "--debug",
-      description = "Turn on debug logging"
+    names = {"--log-level", "--debug"},
+    arity = "0..1",
+    description = "Change logging level; valid values are " +
+      "OFF, ERROR, WARN, INFO, DEBUG, TRACE and ALL. " +
+      "(default: ${DEFAULT-VALUE})",
+    fallbackValue = "DEBUG"
   )
-  boolean debug = false;
+  private volatile String logLevel = "WARN";
+
+  @Option(
+    names = {"-p", "--progress"},
+    description = "Print progress bars during conversion",
+    help = true
+  )
+  private volatile boolean progressBars = false;
 
   @Option(
       names = "--version",
@@ -176,6 +195,8 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
 
   /** Writer metadata. */
   OMEPyramidStore metadata;
+
+  private Map<String, Object> plateData = null;
 
   /**
    * Construct a writer for performing the pyramid conversion.
@@ -318,11 +339,176 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
   }
 
   /**
+   * Translate N5/Zarr/... attributes to the current metadata store.
+   */
+  private void populateMetadata() throws IOException {
+    if (plateData != null) {
+      List<Map<String, Object>> acquisitions =
+        (List<Map<String, Object>>) plateData.get("acquisitions");
+      List<Map<String, Object>> columns =
+        (List<Map<String, Object>>) plateData.get("columns");
+      List<Map<String, Object>> rows =
+        (List<Map<String, Object>>) plateData.get("rows");
+      List<Map<String, Object>> wells =
+        (List<Map<String, Object>>) plateData.get("wells");
+
+      Map<String, Integer> rowLookup = new HashMap<String, Integer>();
+      Map<String, Integer> colLookup = new HashMap<String, Integer>();
+
+      for (int i=0; i<rows.size(); i++) {
+        rowLookup.put(rows.get(i).get("name").toString(), i);
+      }
+      for (int i=0; i<columns.size(); i++) {
+        Object name = columns.get(i).get("name");
+        colLookup.put(getString(name), i);
+      }
+
+      metadata.setPlateID(MetadataTools.createLSID("Plate", 0), 0);
+      metadata.setPlateName((String) plateData.get("name"), 0);
+      metadata.setPlateRows(new PositiveInteger(rows.size()), 0);
+      metadata.setPlateColumns(new PositiveInteger(columns.size()), 0);
+
+      Map<String, Integer> acqLookup = new HashMap<String, Integer>();
+      List<Integer> wsCounter = new ArrayList<Integer>();
+      for (int i=0; i<acquisitions.size(); i++) {
+        String acqID = MetadataTools.createLSID("PlateAcquisition", 0, i);
+        metadata.setPlateAcquisitionID(acqID, 0, i);
+        String plateAcqName = acquisitions.get(i).get("id").toString();
+        metadata.setPlateAcquisitionName(plateAcqName, 0, i);
+        wsCounter.add(0);
+        acqLookup.put(plateAcqName, i);
+      }
+
+      int wsIndex = 0;
+      for (int i=0; i<wells.size(); i++) {
+        String well = (String) wells.get(i).get("path");
+        String[] path = well.split("/");
+
+        metadata.setWellID(MetadataTools.createLSID("Well", 0, i), 0, i);
+        metadata.setWellColumn(
+          new NonNegativeInteger(colLookup.get(path[path.length - 1])), 0, i);
+        metadata.setWellRow(
+          new NonNegativeInteger(rowLookup.get(path[path.length - 2])), 0, i);
+
+        ZarrGroup wellGroup = getZarrGroup(well);
+
+        Map<String, Object> wellAttr =
+          (Map<String, Object>) wellGroup.getAttributes().get("well");
+        List<Map<String, Object>> images =
+          (List<Map<String, Object>>) wellAttr.get("images");
+        for (int img=0; img<images.size(); img++) {
+          String wsID = MetadataTools.createLSID("WellSample", 0, i, img);
+          metadata.setWellSampleID(wsID, 0, i, img);
+          metadata.setWellSampleIndex(
+            new NonNegativeInteger(wsIndex), 0, i, img);
+
+          String imageID = MetadataTools.createLSID("Image", wsIndex);
+          metadata.setWellSampleImageRef(imageID, 0, i, img);
+          int acquisition =
+            acqLookup.get(images.get(img).get("acquisition").toString());
+          int acqIndex = wsCounter.get(acquisition);
+          metadata.setPlateAcquisitionWellSampleRef(
+            wsID, 0, acquisition, acqIndex);
+          wsCounter.set(acquisition, acqIndex + 1);
+
+          metadata.setImageID(imageID, wsIndex);
+          metadata.setPixelsID(
+            MetadataTools.createLSID("Pixels", wsIndex), wsIndex);
+
+          String imgName = (String) images.get(img).get("path");
+          String imgPath = well + "/" + imgName;
+          metadata.setImageName(imgName, wsIndex);
+
+          ZarrGroup imgGroup = getZarrGroup(imgPath);
+          ZarrArray imgArray = imgGroup.openArray("0");
+          int[] dims = imgArray.getShape();
+
+          String order = "XYZCT";
+          int cIndex = order.length() - order.indexOf("C") - 1;
+          int zIndex = order.length() - order.indexOf("Z") - 1;
+          int tIndex = order.length() - order.indexOf("T") - 1;
+          int c = dims[cIndex];
+          PixelType type = getPixelType(imgArray.getDataType());
+
+          boolean bigEndian = imgArray.getByteOrder() == ByteOrder.BIG_ENDIAN;
+
+          metadata.setPixelsBigEndian(bigEndian, wsIndex);
+          metadata.setPixelsType(type, wsIndex);
+          metadata.setPixelsSizeX(
+            new PositiveInteger(dims[dims.length - 1]), wsIndex);
+          metadata.setPixelsSizeY(
+            new PositiveInteger(dims[dims.length - 2]), wsIndex);
+          metadata.setPixelsSizeZ(new PositiveInteger(dims[zIndex]), wsIndex);
+          metadata.setPixelsSizeC(new PositiveInteger(c), wsIndex);
+          metadata.setPixelsSizeT(new PositiveInteger(dims[tIndex]), wsIndex);
+          try {
+            metadata.setPixelsDimensionOrder(
+              DimensionOrder.fromString(order), wsIndex);
+          }
+          catch (EnumerationException e) {
+            LOG.warn("Could not save dimension order", e);
+          }
+
+          for (int ch=0; ch<c; ch++) {
+            metadata.setChannelID(
+              MetadataTools.createLSID("Channel", wsIndex, ch), wsIndex, ch);
+            metadata.setChannelSamplesPerPixel(
+              new PositiveInteger(1), wsIndex, ch);
+          }
+
+          wsIndex++;
+        }
+      }
+    }
+  }
+
+  private PixelType getPixelType(DataType type) {
+    switch (type) {
+      case i1:
+        return PixelType.INT8;
+      case u1:
+        return PixelType.UINT8;
+      case i2:
+        return PixelType.INT16;
+      case u2:
+        return PixelType.UINT16;
+      case i4:
+        return PixelType.INT32;
+      case u4:
+        return PixelType.UINT32;
+      case f4:
+        return PixelType.FLOAT;
+      case f8:
+        return PixelType.DOUBLE;
+      default:
+        throw new IllegalArgumentException("Unsupported pixel type: " + type);
+    }
+  }
+
+  private ZarrGroup getZarrGroup(String path) throws IOException {
+    return ZarrGroup.open(
+      inputDirectory.resolve("data.zarr/" + path).toString());
+  }
+
+  private int getSubgroupCount(String path) throws IOException {
+    return getZarrGroup(path).getGroupKeys().size();
+  }
+
+  /**
    * Calculate the number of series.
    *
    * @return number of series
    */
   private int getSeriesCount() throws IOException {
+    if (plateData != null) {
+      int count = 0;
+      List<Map<String, Object>> wells =
+        (List<Map<String, Object>>) plateData.get("wells");
+      for (Map<String, Object> well : wells) {
+        count += getSubgroupCount((String) well.get("path"));
+      }
+      return count;
+    }
     return reader.getGroupKeys().size();
   }
 
@@ -333,13 +519,46 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
    * @param s current series
    */
   private void findNumberOfResolutions(PyramidSeries s) throws IOException {
-    s.path = String.valueOf(s.index);
-    ZarrGroup seriesGroup =
-      ZarrGroup.open(getZarr().resolve(s.path).toString());
+    if (plateData != null) {
+      List<Map<String, Object>> wells =
+        (List<Map<String, Object>>) plateData.get("wells");
+      int index = 0;
+      for (Map<String, Object> well : wells) {
+        int fields = getSubgroupCount((String) well.get("path"));
+        if (index + fields > s.index) {
+          s.path = well.get("path") + "/" + (s.index - index);
+          break;
+        }
+        index += fields;
+      }
+    }
+    else {
+      s.path = String.valueOf(s.index);
+    }
+
+    ZarrGroup seriesGroup = getZarrGroup(s.path);
     if (seriesGroup == null) {
       throw new IOException("Expected series " + s.index + " not found");
     }
-    s.numberOfResolutions = seriesGroup.getArrayKeys().size();
+
+    // use multiscales metadata if it exists, to distinguish between
+    // resolutions and labels
+    // if no multiscales metadata (older dataset?), assume no labels
+    // and just use the path listing length
+    Map<String, Object> seriesAttributes = seriesGroup.getAttributes();
+    List<Map<String, Object>> multiscales =
+      (List<Map<String, Object>>) seriesAttributes.get("multiscales");
+    if (multiscales != null && multiscales.size() > 0) {
+      List<Map<String, Object>> datasets =
+        (List<Map<String, Object>>) multiscales.get(0).get("datasets");
+      if (datasets != null) {
+        s.numberOfResolutions = datasets.size();
+      }
+    }
+
+    if (s.numberOfResolutions == 0) {
+      s.numberOfResolutions = seriesGroup.getArrayKeys().size();
+    }
   }
 
   /**
@@ -357,9 +576,14 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
 
     Map<String, Object> attributes = reader.getAttributes();
     Integer layoutVersion = (Integer) attributes.get("bioformats2raw.layout");
-    if (layoutVersion == null || layoutVersion != 1) {
+    if (layoutVersion == null) {
+      LOG.warn("Layout version not recorded; may be unsupported");
+    }
+    else if (layoutVersion != 1) {
       throw new FormatException("Unsupported version: " + layoutVersion);
     }
+
+    plateData = (Map<String, Object>) attributes.get("plate");
 
     LOG.info("Creating tiled pyramid file {}", this.outputFilePath);
 
@@ -386,6 +610,7 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
         }
         else {
           metadata = (OMEPyramidStore) service.createOMEXMLMetadata();
+          populateMetadata();
         }
       }
       catch (ServiceException e) {
@@ -538,6 +763,26 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
         LOG.info("Converting resolution #{}", resolution);
         ResolutionDescriptor descriptor = s.resolutions.get(resolution);
         int tileCount = descriptor.numberOfTilesY * descriptor.numberOfTilesX;
+
+        final ProgressBar pb;
+        if (progressBars) {
+          ProgressBarBuilder builder = new ProgressBarBuilder()
+            .setInitialMax(tileCount)
+            .setTaskName(String.format("[%d/%d]", s.index, resolution));
+
+          if (!(logLevel.equals("OFF") ||
+            logLevel.equals("ERROR") ||
+            logLevel.equals("WARN")))
+          {
+            builder.setConsumer(new DelegatingProgressBarConsumer(LOG::trace));
+          }
+
+          pb = builder.build();
+        }
+        else {
+          pb = null;
+        }
+
         for (int plane=0; plane<s.planeCount; plane++) {
           int tileIndex = 0;
           // if the resolution has already been calculated,
@@ -604,12 +849,20 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
                   }
                   finally {
                     t1.stop();
+                    if (pb != null) {
+                      pb.step();
+                    }
                   }
                 });
               }
             }
           }
         }
+
+        if (pb != null) {
+          pb.close();
+        }
+
       }
     }
     finally {
@@ -899,12 +1152,7 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
   private void setupLogger() {
     ch.qos.logback.classic.Logger root = (ch.qos.logback.classic.Logger)
       LoggerFactory.getLogger(Logger.ROOT_LOGGER_NAME);
-    if (debug) {
-      root.setLevel(Level.DEBUG);
-    }
-    else {
-      root.setLevel(Level.INFO);
-    }
+    root.setLevel(Level.toLevel(logLevel));
   }
 
   /**
@@ -963,6 +1211,16 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
           value.toString());
       }
     }
+  }
+
+  private String getString(Object attr) {
+    if (attr == null) {
+      return null;
+    }
+    if (attr instanceof Double) {
+      return String.valueOf(((Double) attr).intValue());
+    }
+    return attr.toString();
   }
 
 }
