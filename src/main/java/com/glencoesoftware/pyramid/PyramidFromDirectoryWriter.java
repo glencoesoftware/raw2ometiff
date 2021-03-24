@@ -104,9 +104,6 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
   /** Name of OME-XML metadata file. */
   private static final String OMEXML_FILE = "METADATA.ome.xml";
 
-  /** Name of root Zarr directory. */
-  private static final String ZARR = "data.zarr";
-
   private static final Logger LOG =
     LoggerFactory.getLogger(PyramidFromDirectoryWriter.class);
 
@@ -270,7 +267,7 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
    * @return Path representing the root Zarr directory
    */
   private Path getZarr() {
-    return inputDirectory.resolve(ZARR);
+    return inputDirectory;
   }
 
   /**
@@ -486,8 +483,7 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
   }
 
   private ZarrGroup getZarrGroup(String path) throws IOException {
-    return ZarrGroup.open(
-      inputDirectory.resolve("data.zarr/" + path).toString());
+    return ZarrGroup.open(inputDirectory.resolve(path).toString());
   }
 
   private int getSubgroupCount(String path) throws IOException {
@@ -1136,7 +1132,7 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
 
   /**
    * Create a reader for the chosen input directory.
-   * If the input directory contains "data.zarr", a Zarr reader is used.
+   * If the input directory contains a Zarr group, a Zarr reader is used.
    * If an appropriate reader cannot be found, the reader will remain null.
    */
   private void createReader() throws IOException {
