@@ -379,13 +379,22 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
       int wsIndex = 0;
       for (int i=0; i<wells.size(); i++) {
         String well = (String) wells.get(i).get("path");
+        Integer rowIndex = (Integer) wells.get(i).get("row_index");
+        Integer colIndex = (Integer) wells.get(i).get("column_index");
         String[] path = well.split("/");
 
+        if (rowIndex == null) {
+          LOG.warn("Well {} row_index missing; attempting to calculate", i);
+          rowIndex = rowLookup.get(path[path.length - 2]);
+        }
+        if (colIndex == null) {
+          LOG.warn("Well {} column_index missing; attempting to calculate", i);
+          colIndex = colLookup.get(path[path.length - 1]);
+        }
+
         metadata.setWellID(MetadataTools.createLSID("Well", 0, i), 0, i);
-        metadata.setWellColumn(
-          new NonNegativeInteger(colLookup.get(path[path.length - 1])), 0, i);
-        metadata.setWellRow(
-          new NonNegativeInteger(rowLookup.get(path[path.length - 2])), 0, i);
+        metadata.setWellColumn(new NonNegativeInteger(colIndex), 0, i);
+        metadata.setWellRow(new NonNegativeInteger(rowIndex), 0, i);
 
         ZarrGroup wellGroup = getZarrGroup(well);
 
