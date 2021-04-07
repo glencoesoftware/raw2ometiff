@@ -24,9 +24,6 @@ repositories {
         url 'http://nexus.senbox.net/nexus/content/groups/public'
     }
     maven {
-        url 'https://repo.glencoesoftware.com/repository/n5-zarr-snapshots/'
-    }
-    maven {
         url 'https://repo.glencoesoftware.com/repository/jzarr-snapshots'
     }
     maven {

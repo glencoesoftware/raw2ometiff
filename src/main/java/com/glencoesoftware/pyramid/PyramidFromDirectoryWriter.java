@@ -336,7 +336,7 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
   }
 
   /**
-   * Translate N5/Zarr/... attributes to the current metadata store.
+   * Translate Zarr attributes to the current metadata store.
    */
   private void populateMetadata() throws IOException {
     if (plateData != null) {

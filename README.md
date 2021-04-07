@@ -10,7 +10,7 @@ Requirements
 ============
 
 libblosc (https://github.com/Blosc/c-blosc) version 1.9.0 or later must be installed separately.
-The native libraries are not packaged with any relevant jars.  See also note in n5-zarr readme (https://github.com/saalfeldlab/n5-zarr/blob/0.0.2-beta/README.md)
+The native libraries are not packaged with any relevant jars.  See also note in jzarr readme (https://github.com/bcdev/jzarr/blob/master/README.md)
 
  * Mac OSX: `brew install c-blosc`
  * Ubuntu 18.04+: `apt-get install libblosc1`
@@ -51,7 +51,7 @@ or generate a 5.9.x-compatible pyramid:
 
     raw2ometiff tile_directory pyramid.tiff --legacy
 
-The input tile directory must contain a full pyramid in a Zarr or N5 container.
+The input tile directory must contain a full pyramid in a Zarr container.
 
 By default, LZW compression will be used in the OME-TIFF file.
 The compression can be changed using the `--compression` option.
