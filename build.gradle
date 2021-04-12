@@ -32,7 +32,7 @@ repositories {
 }
 
 dependencies {
-    implementation 'com.bc.zarr:jzarr:0.3.2'
+    implementation 'com.bc.zarr:jzarr:0.3.3-gs-SNAPSHOT'
     implementation 'info.picocli:picocli:4.2.0'
     implementation 'me.tongfei:progressbar:0.9.0'
     implementation 'ome:formats-bsd:6.4.0'

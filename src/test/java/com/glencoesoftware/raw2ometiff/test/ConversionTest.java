@@ -20,6 +20,10 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
+import com.bc.zarr.ZarrArray;
+import com.bc.zarr.ZarrGroup;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.glencoesoftware.bioformats2raw.Converter;
 import com.glencoesoftware.pyramid.PyramidFromDirectoryWriter;
 
@@ -240,6 +244,13 @@ public class ConversionTest {
     input = fake();
     assertBioFormats2Raw();
     assertTool();
+    ZarrArray series0 = ZarrGroup.open(output.resolve("0")).openArray("0");
+    Assert.assertTrue(series0.getNested());
+    // Also ensure we're using the latest .zarray metadata
+    ObjectMapper objectMapper = new ObjectMapper();
+    JsonNode root = objectMapper.readTree(
+        output.resolve("0/0/.zarray").toFile());
+    Assert.assertEquals("/", root.path("dimension_separator").asText());
     try (ImageReader reader = new ImageReader()) {
       reader.setFlattenedResolutions(false);
       reader.setId(outputOmeTiff.toString());
