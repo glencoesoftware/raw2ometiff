@@ -584,7 +584,7 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
     if (layoutVersion == null) {
       LOG.warn("Layout version not recorded; may be unsupported");
     }
-    else if (layoutVersion != 2) {
+    else if (layoutVersion != 3) {
       throw new FormatException("Unsupported version: " + layoutVersion);
     }
 
