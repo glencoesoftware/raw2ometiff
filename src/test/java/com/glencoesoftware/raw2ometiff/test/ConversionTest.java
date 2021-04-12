@@ -68,7 +68,8 @@ public class ConversionTest {
       converter = new Converter();
       CommandLine.call(converter, args.toArray(new String[]{}));
       Assert.assertTrue(Files.exists(output.resolve(".zattrs")));
-      Assert.assertTrue(Files.exists(output.resolve("METADATA.ome.xml")));
+      Assert.assertTrue(Files.exists(
+        output.resolve("OME").resolve("METADATA.ome.xml")));
     }
     catch (RuntimeException rt) {
       throw rt;
