@@ -258,7 +258,7 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
    * @return Path representing the expected OME-XML metadata file
    */
   private Path getOMEXMLFile() {
-    return getZarr().resolve(OMEXML_FILE);
+    return getZarr().resolve("OME").resolve(OMEXML_FILE);
   }
 
   /**
