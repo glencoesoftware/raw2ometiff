@@ -12,6 +12,7 @@ import java.io.IOException;
 import java.lang.reflect.Array;
 import java.nio.ByteBuffer;
 import java.nio.ShortBuffer;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -28,11 +29,16 @@ import com.glencoesoftware.bioformats2raw.Converter;
 import com.glencoesoftware.pyramid.PyramidFromDirectoryWriter;
 
 import loci.common.DataTools;
+import loci.common.services.ServiceFactory;
 import loci.formats.FormatTools;
 import loci.formats.ImageReader;
+import loci.formats.in.OMETiffReader;
+import loci.formats.ome.OMEXMLMetadata;
+import loci.formats.services.OMEXMLService;
 import loci.formats.tiff.IFD;
 import loci.formats.tiff.IFDList;
 import loci.formats.tiff.TiffParser;
+import ome.xml.model.OME;
 import picocli.CommandLine;
 
 import org.junit.Assert;
@@ -379,6 +385,33 @@ public class ConversionTest {
     assertBioFormats2Raw();
     assertTool();
     iteratePixels();
+    try (ImageReader reader = new ImageReader()) {
+      reader.setFlattenedResolutions(false);
+      reader.setId(outputOmeTiff.toString());
+      Assert.assertEquals(24, reader.getSeriesCount());
+    }
+  }
+
+  /**
+   * Test single image no HCS.
+   */
+  @Test
+  public void testSingleImageNoHCS() throws Exception {
+    input =
+      fake("plateRows", "2", "plateCols", "3", "fields", "4", "sizeC", "3");
+    assertBioFormats2Raw("--series", "0", "--no-hcs");
+    assertTool();
+    try (ImageReader reader = new ImageReader()) {
+      ServiceFactory sf = new ServiceFactory();
+      OMEXMLService xmlService = sf.getInstance(OMEXMLService.class);
+      OMEXMLMetadata metadata = xmlService.createOMEXMLMetadata();
+      reader.setMetadataStore(metadata);
+      reader.setFlattenedResolutions(false);
+      reader.setId(outputOmeTiff.toString());
+      Assert.assertEquals(1, reader.getSeriesCount());
+      Assert.assertEquals(1, metadata.getImageCount());
+      Assert.assertEquals(0, metadata.getPlateCount());
+    }
   }
 
 }
