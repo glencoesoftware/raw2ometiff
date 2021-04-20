@@ -383,9 +383,15 @@ public class ConversionTest {
     assertTool();
     iteratePixels();
     try (ImageReader reader = new ImageReader()) {
+      ServiceFactory sf = new ServiceFactory();
+      OMEXMLService xmlService = sf.getInstance(OMEXMLService.class);
+      OMEXMLMetadata metadata = xmlService.createOMEXMLMetadata();
+      reader.setMetadataStore(metadata);
       reader.setFlattenedResolutions(false);
       reader.setId(outputOmeTiff.toString());
       Assert.assertEquals(24, reader.getSeriesCount());
+      Assert.assertEquals(24, metadata.getImageCount());
+      Assert.assertEquals(1, metadata.getPlateCount());
     }
   }
 
