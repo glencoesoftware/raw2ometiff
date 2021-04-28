@@ -1102,6 +1102,10 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
     long[] byteCounts = ifd.getIFDLongArray(IFD.TILE_BYTE_COUNTS);
     offsets[tileIndex] = outStream.getFilePointer();
     byteCounts[tileIndex] = (long) realTile.length;
+    LOG.info(
+      "series = {}, resolution = {}, tile = {}, offset = {}, length = {}",
+      s.index, resolution, tileIndex,
+      offsets[tileIndex], byteCounts[tileIndex]);
 
     outStream.write(realTile);
 
