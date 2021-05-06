@@ -505,6 +505,9 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
    * @return number of series
    */
   private int getSeriesCount() throws IOException {
+    LOG.debug("getSeriesCount:");
+    LOG.debug("  plateData = {}", plateData);
+    LOG.debug("  group key count = {}", reader.getGroupKeys().size());
     if (plateData != null) {
       int count = 0;
       List<Map<String, Object>> wells =
@@ -512,6 +515,7 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
       for (Map<String, Object> well : wells) {
         count += getSubgroupCount((String) well.get("path"));
       }
+      LOG.debug("  returning plate-based series count = {}", count);
       return count;
     }
     return reader.getGroupKeys().size();
@@ -1146,7 +1150,9 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
    */
   private void createReader() throws IOException {
     Path zarr = getZarr();
+    LOG.debug("attempting to open {}", zarr);
     if (Files.exists(zarr)) {
+      LOG.debug("  zarr directory exists");
       reader = ZarrGroup.open(zarr.toString());
     }
   }
