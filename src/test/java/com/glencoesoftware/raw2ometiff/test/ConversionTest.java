@@ -40,7 +40,9 @@ import loci.formats.tiff.TiffParser;
 import picocli.CommandLine;
 import picocli.CommandLine.ExecutionException;
 
+import org.apache.commons.lang3.SystemUtils;
 import org.junit.Assert;
+import org.junit.Assume;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
@@ -273,6 +275,7 @@ public class ConversionTest {
    */
   @Test
   public void testSymlinkAsRoot() throws Exception {
+    Assume.assumeTrue(SystemUtils.IS_OS_LINUX);
     input = fake();
     assertBioFormats2Raw();
     Path notASymlink = output.resolveSibling(output.getFileName() + ".old");
