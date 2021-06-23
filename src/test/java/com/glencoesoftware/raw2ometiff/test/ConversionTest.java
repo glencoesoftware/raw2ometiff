@@ -241,14 +241,7 @@ public class ConversionTest {
         reader.isLittleEndian());
   }
 
-  /**
-   * Test defaults.
-   */
-  @Test
-  public void testDefaults() throws Exception {
-    input = fake();
-    assertBioFormats2Raw();
-    assertTool();
+  private void assertDefaults() throws Exception {
     ZarrArray series0 = ZarrGroup.open(output.resolve("0")).openArray("0");
     Assert.assertTrue(series0.getNested());
     // Also ensure we're using the latest .zarray metadata
@@ -266,6 +259,31 @@ public class ConversionTest {
 
   /**
    * Test defaults.
+   */
+  @Test
+  public void testDefaults() throws Exception {
+    input = fake();
+    assertBioFormats2Raw();
+    assertTool();
+    assertDefaults();
+  }
+
+  /**
+   * Test symlink as the root.
+   */
+  @Test
+  public void testSymlinkAsRoot() throws Exception {
+    input = fake();
+    assertBioFormats2Raw();
+    Path notASymlink = output.resolveSibling(output.getFileName() + ".old");
+    Files.move(output, notASymlink);
+    Files.createSymbolicLink(output, notASymlink);
+    assertTool();
+    assertDefaults();
+  }
+
+  /**
+   * Test series count check.
    */
   @Test
   public void testSeriesCountCheck() throws Exception {
