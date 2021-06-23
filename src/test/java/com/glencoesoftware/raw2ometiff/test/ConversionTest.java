@@ -263,6 +263,17 @@ public class ConversionTest {
   }
 
   /**
+   * Test defaults.
+   */
+  @Test
+  public void testSeriesCountCheck() throws Exception {
+    input = fake();
+    assertBioFormats2Raw();
+    Files.delete(output.resolve("0").resolve(".zgroup"));
+    assertTool();
+  }
+
+  /**
    * Test South and East edge padding.
    */
   @Test
