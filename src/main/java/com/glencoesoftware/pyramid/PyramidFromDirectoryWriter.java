@@ -630,6 +630,10 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
 
     int seriesCount = getSeriesCount();
 
+    if (seriesCount < 1) {
+      throw new FormatException("Found no images to convert.  Corrupt input?");
+    }
+
     if (seriesCount > 1 && legacy) {
       LOG.warn("Omitting {} series due to legacy output", seriesCount - 1);
       seriesCount = 1;
