@@ -772,7 +772,7 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
         final ProgressBar pb;
         if (progressBars) {
           ProgressBarBuilder builder = new ProgressBarBuilder()
-            .setInitialMax(tileCount)
+            .setInitialMax(tileCount * s.planeCount)
             .setTaskName(String.format("[%d/%d]", s.index, resolution));
 
           if (!(logLevel.equals("OFF") ||
