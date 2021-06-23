@@ -29,6 +29,7 @@ import com.glencoesoftware.pyramid.PyramidFromDirectoryWriter;
 
 import loci.common.DataTools;
 import loci.common.services.ServiceFactory;
+import loci.formats.FormatException;
 import loci.formats.FormatTools;
 import loci.formats.ImageReader;
 import loci.formats.ome.OMEXMLMetadata;
@@ -37,6 +38,7 @@ import loci.formats.tiff.IFD;
 import loci.formats.tiff.IFDList;
 import loci.formats.tiff.TiffParser;
 import picocli.CommandLine;
+import picocli.CommandLine.ExecutionException;
 
 import org.junit.Assert;
 import org.junit.Rule;
@@ -260,6 +262,24 @@ public class ConversionTest {
       Assert.assertEquals(2, reader.getResolutionCount());
     }
     iteratePixels();
+  }
+
+  /**
+   * Test defaults.
+   */
+  @Test
+  public void testSeriesCountCheck() throws Exception {
+    input = fake();
+    assertBioFormats2Raw();
+    Files.delete(output.resolve("0").resolve(".zgroup"));
+    try {
+      assertTool();
+    }
+    catch (ExecutionException e) {
+      // First cause is RuntimeException wrapping the checked FormatException
+      Assert.assertEquals(
+          FormatException.class, e.getCause().getCause().getClass());
+    }
   }
 
   /**
