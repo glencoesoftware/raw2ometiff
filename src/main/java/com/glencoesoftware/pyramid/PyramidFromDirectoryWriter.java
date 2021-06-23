@@ -505,9 +505,10 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
    * @return number of series
    */
   private int getSeriesCount() throws IOException {
+    int groupKeyCount = reader.getGroupKeys().size();
     LOG.debug("getSeriesCount:");
     LOG.debug("  plateData = {}", plateData);
-    LOG.debug("  group key count = {}", reader.getGroupKeys().size());
+    LOG.debug("  group key count = {}", groupKeyCount);
     if (plateData != null) {
       int count = 0;
       List<Map<String, Object>> wells =
@@ -518,7 +519,7 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
       LOG.debug("  returning plate-based series count = {}", count);
       return count;
     }
-    return reader.getGroupKeys().size();
+    return groupKeyCount;
   }
 
   /**
