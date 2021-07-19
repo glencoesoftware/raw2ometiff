@@ -5,7 +5,7 @@ plugins {
 }
 
 group = 'com.glencoesoftware'
-version = '0.3.0-SNAPSHOT'
+version = '0.3.0'
 
 mainClassName = 'com.glencoesoftware.pyramid.PyramidFromDirectoryWriter'
 sourceCompatibility = 1.8
@@ -40,7 +40,7 @@ dependencies {
     implementation 'org.json:json:20190722'
     testImplementation 'junit:junit:4.12'
     testImplementation 'org.apache.commons:commons-lang3:3.12.0'
-    testImplementation 'com.glencoesoftware:bioformats2raw:0.3.0-SNAPSHOT'
+    testImplementation 'com.glencoesoftware:bioformats2raw:0.3.0'
 }
 
 test {
