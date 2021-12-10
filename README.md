@@ -33,6 +33,14 @@ Development Installation
 
     ./gradlew tasks
 
+Docker image
+============
+
+Use the included Docker file to create a Docker image from a release:
+
+     docker build -t whoami/raw2ometiff:0.3.0 - < Dockerfile
+
+
 Eclipse Configuration
 =====================
 
