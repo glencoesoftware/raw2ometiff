@@ -21,7 +21,7 @@ FROM openjdk:8 as final
 USER root
 RUN DEBIAN_FRONTEND=noninteractive \
     apt-get update -y -q \
- && apt-get install -y -q libblosc1 \
+ && apt-get install -y --no-install-recommends -q libblosc1 \
  && apt-get autoremove -y && apt-get clean -y && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
 
 COPY --from=build /tmp/staging-area/ /opt/raw2ometiff/
