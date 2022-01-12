@@ -1,11 +1,5 @@
 appveyor.yml
-build.gradle
-config
-gradle
-gradlew
-gradlew.bat
 LICENSE.txt
 README.md
-src
 .git
 .gitignore

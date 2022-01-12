@@ -38,7 +38,7 @@ Docker image
 
 Use the included Docker file to create a Docker image from a release:
 
-     docker build -t whoami/raw2ometiff:0.3.0 - < Dockerfile
+     docker build -t whoami/raw2ometiff:0.3.0 .
 
 
 Eclipse Configuration

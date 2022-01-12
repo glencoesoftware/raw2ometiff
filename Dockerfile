@@ -1,19 +1,19 @@
 
-FROM debian:10 as build
+ARG BUILD_IMAGE=gradle:6.9-jdk8
 
-ARG release=0.3.0
+FROM ${BUILD_IMAGE} as build
 
 USER root
-WORKDIR /tmp
-ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq libblosc1
+RUN mkdir -p /raw2ometiff \
+ && chown 1000:1000 /raw2ometiff
 
-RUN apt-get update -q -y && apt-get install -y -q \
-      unzip wget
-RUN wget -q -O the_archive.zip "https://github.com/glencoesoftware/raw2ometiff/releases/download/v${release}/raw2ometiff-${release}.zip"
-RUN unzip the_archive.zip
-RUN cd raw2ometiff-* \
- && mkdir -p /tmp/staging-area \
- && mv * /tmp/staging-area
+# Build all
+USER 1000
+COPY --chown=1000:1000 . /raw2ometiff
+WORKDIR /raw2ometiff
+RUN gradle build
+RUN cd build/distributions && rm raw2ometiff*tar && unzip raw2ometiff*zip && rm -rf raw2ometiff*zip
 
 
 FROM openjdk:8 as final
@@ -24,9 +24,9 @@ RUN DEBIAN_FRONTEND=noninteractive \
  && apt-get install -y --no-install-recommends -q libblosc1 \
  && apt-get autoremove -y && apt-get clean -y && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
 
-COPY --from=build /tmp/staging-area/ /opt/raw2ometiff/
+COPY --from=build /raw2ometiff/build/distributions/raw2ometiff* /opt/raw2ometiff
 ENV PATH="/opt/raw2ometiff/bin:${PATH}"
 
 USER 1000
 WORKDIR /opt/raw2ometiff
-CMD ["raw2ometiff"]
+ENTRYPOINT ["/opt/raw2ometiff/bin/raw2ometiff"]
