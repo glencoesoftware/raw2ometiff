@@ -59,6 +59,9 @@ By default, LZW compression will be used in the OME-TIFF file.
 The compression can be changed using the `--compression` option.
 Tile compression is performed in parallel.  The number of workers can be changed using the `--max_workers` option.
 
+`axes` and `transformations` metadata in the input Zarr will be ignored. This metadata is assumed to be consistent
+with the corresponding `PhysicalSize*`, `TimeIncrement`, and `DimensionOrder` values in the input `METADATA.ome.xml`.
+
 Areas to improve
 ================
 
