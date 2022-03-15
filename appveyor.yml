@@ -1,5 +1,11 @@
 version: 0.3.1.{build}
 
+environment:
+  ARTIFACTORY_USERNAME:
+    secure: ZVwlgtk8NtZWeEqpYjR9d8NXeX+xMnuCzgITBKRhtD8=
+  ARTIFACTORY_PASSWORD:
+    secure: O6ThMzLvtSOPLV0U5yFOkl8G1tFrFOGZEpKI4NSD12c=
+
 image: Ubuntu
 stack: jdk 11
 
@@ -14,6 +20,7 @@ build_script:
 
 after_test:
   - ./gradlew distZip
+  - if [ -z "$APPVEYOR_PULL_REQUEST_NUMBER" ]; then ./gradlew -PArtifactoryUserName=${ARTIFACTORY_USERNAME} -PArtifactoryPassword=${ARTIFACTORY_PASSWORD} publish; fi
 
 artifacts:
   - path: 'build\distributions\*.zip'
