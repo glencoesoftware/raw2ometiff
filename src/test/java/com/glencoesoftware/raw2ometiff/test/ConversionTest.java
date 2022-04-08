@@ -458,4 +458,15 @@ public class ConversionTest {
     }
   }
 
+  /**
+   * Test "--version" with no other arguments.
+   * Does not test the version values, just makes sure that an exception
+   * is not thrown.
+   */
+  @Test
+  public void testVersionOnly() throws Exception {
+    CommandLine.call(
+      new PyramidFromDirectoryWriter(), new String[] {"--version"});
+  }
+
 }
