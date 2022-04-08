@@ -212,12 +212,13 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
 
   @Override
   public Void call() throws Exception {
-    // Resolve symlinks
-    inputDirectory = inputDirectory.toRealPath();
     if (printVersion) {
       printVersion();
       return null;
     }
+
+    // Resolve symlinks
+    inputDirectory = inputDirectory.toRealPath();
 
     setupLogger();
 
