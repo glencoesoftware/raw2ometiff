@@ -33,6 +33,7 @@ repositories {
 }
 
 dependencies {
+    implementation 'net.java.dev.jna:jna:5.10.0'
     implementation 'com.bc.zarr:jzarr:0.3.3-gs-SNAPSHOT'
     implementation 'info.picocli:picocli:4.2.0'
     implementation 'me.tongfei:progressbar:0.9.0'
