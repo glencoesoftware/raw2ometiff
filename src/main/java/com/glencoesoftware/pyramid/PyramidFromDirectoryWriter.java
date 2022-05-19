@@ -1015,7 +1015,8 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
       }
     }
 
-    if (resolution == 0 && plane == 0) {
+    // only write the OME-XML to the first full-resolution IFD
+    if (s.index == 0 && resolution == 0 && plane == 0) {
       try {
         OMEXMLService service = getService();
         String omexml = service.getOMEXML(metadata);
