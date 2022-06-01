@@ -57,6 +57,15 @@ The input tile directory must contain a full pyramid in a Zarr container.
 
 By default, LZW compression will be used in the OME-TIFF file.
 The compression can be changed using the `--compression` option.
+If the `--compression` option is set to `JPEG-2000 Lossy`, then
+the `--quality` option can be used to control encoded bitrate in bits per pixel.
+The quality is a floating point number and must be greater than 0. A larger number implies less data loss but also larger file size.
+By default, the quality is set to the largest positive finite value of type double (64 bit floating point).
+This is equivalent to lossless compression, i.e. setting `--compression` to `JPEG-2000`.
+To see truly lossy compression, the quality should be set to less than the bit depth of the input image (e.g. less than 8 for uint8 data).
+We recommend experimenting with different quality values between 0.25 and the bit depth of the input image to find an acceptable tradeoff
+between file size and visual appeal of the converted images.
+
 Tile compression is performed in parallel.  The number of workers can be changed using the `--max_workers` option.
 
 `axes` and `transformations` metadata in the input Zarr will be ignored. This metadata is assumed to be consistent
