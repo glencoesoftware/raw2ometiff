@@ -55,8 +55,10 @@ or generate a 5.9.x-compatible pyramid:
 
 The input tile directory must contain a full pyramid in a Zarr container.
 
-By default, LZW compression will be used in the OME-TIFF file.
 The compression can be changed using the `--compression` option.
+Valid compression types are `Uncompressed`, `LZW`, `JPEG-2000`, `JPEG-2000 Lossy`, `JPEG`, and `zlib`.
+By default, `LZW` compression will be used in the OME-TIFF file.
+
 If the `--compression` option is set to `JPEG-2000 Lossy`, then
 the `--quality` option can be used to control encoded bitrate in bits per pixel.
 The quality is a floating point number and must be greater than 0. A larger number implies less data loss but also larger file size.
