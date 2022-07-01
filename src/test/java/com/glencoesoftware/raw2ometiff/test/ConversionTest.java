@@ -97,17 +97,40 @@ public class ConversionTest {
    * @param additionalArgs CLI arguments as needed beyond "input output"
    */
   void assertTool(String...additionalArgs) throws IOException {
+    assertTool(0, additionalArgs);
+  }
+
+  /**
+   * Run the PyramidFromDirectoryWriter main method and check for success or
+   * failure.
+   *
+   * @param fileCount number of files to expect, if splitting
+   * @param additionalArgs CLI arguments as needed beyond "input output"
+   */
+  void assertTool(int fileCount, String...additionalArgs) throws IOException {
     List<String> args = new ArrayList<String>();
     for (String arg : additionalArgs) {
       args.add(arg);
     }
     args.add(output.toString());
-    outputOmeTiff = output.resolve("output.ome.tiff");
+    outputOmeTiff =
+      output.resolve(fileCount == 0 ? "output.ome.tiff" : "output");
     args.add(outputOmeTiff.toString());
     try {
       writer = new PyramidFromDirectoryWriter();
       CommandLine.call(writer, args.toArray(new String[]{}));
-      Assert.assertTrue(Files.exists(outputOmeTiff));
+      if (fileCount == 0) {
+        Assert.assertTrue(Files.exists(outputOmeTiff));
+      }
+      else {
+        for (int i=0; i<fileCount; i++) {
+          Assert.assertTrue(Files.exists(
+            Paths.get(outputOmeTiff.toString() + "_s" + i + ".ome.tiff")));
+        }
+        Assert.assertFalse(Files.exists(
+            Paths.get(outputOmeTiff.toString() + "_s" +
+            fileCount + ".ome.tiff")));
+      }
     }
     catch (RuntimeException rt) {
       throw rt;
@@ -200,27 +223,38 @@ public class ConversionTest {
    * and output OME-TIFF files.  Sub-resolutions are not checked.
    */
   void iteratePixels() throws Exception {
+    try (ImageReader outputReader = new ImageReader()) {
+      outputReader.setFlattenedResolutions(false);
+      outputReader.setId(outputOmeTiff.toString());
+      iteratePixels(outputReader);
+    }
+  }
+
+
+  /**
+   * Compare each pixel in each plane in each series of the input fake
+   * and output OME-TIFF files.  Sub-resolutions are not checked.
+   *
+   * @param outputReader initialized reader for converted OME-TIFF
+   */
+  void iteratePixels(ImageReader outputReader) throws Exception {
     try (ImageReader inputReader = new ImageReader()) {
       inputReader.setId(input.toString());
-      try (ImageReader outputReader = new ImageReader()) {
-        outputReader.setFlattenedResolutions(false);
-        outputReader.setId(outputOmeTiff.toString());
 
-        for (int series=0; series<inputReader.getSeriesCount(); series++) {
-          inputReader.setSeries(series);
-          outputReader.setSeries(series);
+      for (int series=0; series<inputReader.getSeriesCount(); series++) {
+        inputReader.setSeries(series);
+        outputReader.setSeries(series);
 
-          for (int plane=0; plane<inputReader.getImageCount(); plane++) {
-            Object inputPlane = getPlane(inputReader, plane);
-            Object outputPlane = getPlane(outputReader, plane);
+        for (int plane=0; plane<inputReader.getImageCount(); plane++) {
+          Object inputPlane = getPlane(inputReader, plane);
+          Object outputPlane = getPlane(outputReader, plane);
 
-            int inputLength = Array.getLength(inputPlane);
-            int outputLength = Array.getLength(outputPlane);
-            Assert.assertEquals(inputLength, outputLength);
-            for (int px=0; px<inputLength; px++) {
-              Assert.assertEquals(
-                  Array.get(inputPlane, px), Array.get(outputPlane, px));
-            }
+          int inputLength = Array.getLength(inputPlane);
+          int outputLength = Array.getLength(outputPlane);
+          Assert.assertEquals(inputLength, outputLength);
+          for (int px=0; px<inputLength; px++) {
+            Assert.assertEquals(
+                Array.get(inputPlane, px), Array.get(outputPlane, px));
           }
         }
       }
@@ -455,6 +489,32 @@ public class ConversionTest {
       Assert.assertEquals(1, reader.getSeriesCount());
       Assert.assertEquals(1, metadata.getImageCount());
       Assert.assertEquals(0, metadata.getPlateCount());
+    }
+  }
+
+  /**
+   * Test splitting series into separate files.
+   */
+  @Test
+  public void testSplitFiles() throws Exception {
+    input =
+      fake("plateRows", "2", "plateCols", "3", "fields", "4", "sizeC", "3");
+    assertBioFormats2Raw();
+    assertTool(24, "--split");
+
+    try (ImageReader reader = new ImageReader()) {
+      ServiceFactory sf = new ServiceFactory();
+      OMEXMLService xmlService = sf.getInstance(OMEXMLService.class);
+      OMEXMLMetadata metadata = xmlService.createOMEXMLMetadata();
+      reader.setMetadataStore(metadata);
+      reader.setFlattenedResolutions(false);
+      reader.setId(outputOmeTiff.toString() + "_s0.ome.tiff");
+
+      Assert.assertEquals(reader.getSeriesCount(), 24);
+      Assert.assertEquals(1, metadata.getPlateCount());
+      Assert.assertEquals(24, metadata.getImageCount());
+
+      iteratePixels(reader);
     }
   }
 

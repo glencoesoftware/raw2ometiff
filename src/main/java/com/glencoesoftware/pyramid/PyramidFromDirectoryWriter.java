@@ -11,6 +11,7 @@ import java.io.IOException;
 import java.nio.ByteOrder;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
@@ -18,6 +19,7 @@ import java.util.Hashtable;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.UUID;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutorService;
@@ -107,9 +109,9 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
   private static final Logger LOG =
     LoggerFactory.getLogger(PyramidFromDirectoryWriter.class);
 
-  /** Stream and writer for output TIFF file. */
-  TiffSaver writer;
-  RandomAccessOutputStream outStream;
+  /** Path to each output file. */
+  private List<Path> seriesPaths = new ArrayList<Path>();
+  private Map<String, String> uuids = new HashMap<String, String>();
 
   private BlockingQueue<Runnable> tileQueue;
   private ExecutorService executor;
@@ -175,6 +177,13 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
   boolean legacy = false;
 
   @Option(
+      names = "--split",
+      description =
+        "Split output into one OME-TIFF file per OME Image/Zarr group"
+  )
+  boolean splitBySeries = false;
+
+  @Option(
       names = "--max_workers",
       description = "Maximum number of workers (default: ${DEFAULT-VALUE})"
   )
@@ -221,6 +230,11 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
     inputDirectory = inputDirectory.toRealPath();
 
     setupLogger();
+
+    // we could support this case later, just keeping it simple for now
+    if (splitBySeries && legacy) {
+      throw new IllegalArgumentException("--split not supported with --legacy");
+    }
 
     try {
       StopWatch t0 = new Slf4JStopWatch("initialize");
@@ -726,17 +740,45 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
 
       series.add(s);
       totalPlanes += s.planeCount;
+
+      if (splitBySeries) {
+        seriesPaths.add(
+          Paths.get(outputFilePath.toString() + "_s" + s.index + ".ome.tiff"));
+      }
+      else {
+        seriesPaths.add(outputFilePath);
+      }
+      uuids.put(seriesPaths.get(s.index).toString(),
+        "urn:uuid:" + UUID.randomUUID().toString());
     }
 
+    populateTiffData();
     populateOriginalMetadata(service);
 
-    outStream = new RandomAccessOutputStream(outputFilePath.toString());
-    writer = new TiffSaver(outStream, outputFilePath.toString());
-    writer.setBigTiff(true);
+    for (Path p : seriesPaths) {
+      writeTIFFHeader(p.toString());
+    }
+  }
+
+  private void writeTIFFHeader(String output) throws IOException {
+    try (RandomAccessOutputStream out = new RandomAccessOutputStream(output)) {
+      try (TiffSaver w = createTiffSaver(out, output)) {
+        w.writeHeader();
+      }
+    }
+  }
+
+  private TiffSaver createTiffSaver(RandomAccessOutputStream out, String file) {
+    TiffSaver w = new TiffSaver(out, file);
+    w.setBigTiff(true);
     // assumes all series have same endian setting
     // series with opposite endianness are logged above
-    writer.setLittleEndian(series.get(0).littleEndian);
-    writer.writeHeader();
+    w.setLittleEndian(series.get(0).littleEndian);
+    return w;
+  }
+
+  private String getSeriesPathName(PyramidSeries s) {
+    return seriesPaths.get(s.index).toString();
   }
 
    //* Conversion */
@@ -754,9 +796,6 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
       convertPyramid(s);
     }
     writeIFDs();
-
-    this.writer.close();
-    outStream.close();
   }
 
   private void convertPyramid(PyramidSeries s)
@@ -889,44 +928,69 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
   }
 
   private void writeIFDs() throws FormatException, IOException {
-    long firstIFD = outStream.getFilePointer();
+    Map<String, Long> firstIFDOffsets = new HashMap<String, Long>();
 
     // write sub-IFDs for every series first
     long[][][] subs = new long[series.size()][][];
     for (PyramidSeries s : series) {
-      if (legacy) {
-        for (int resolution=0; resolution<s.numberOfResolutions; resolution++) {
-          for (int plane=0; plane<s.planeCount; plane++) {
-            boolean last = (resolution == s.numberOfResolutions - 1) &&
-              (plane == s.planeCount - 1);
-            writeIFD(s, resolution, plane, !last);
-          }
+      String path = getSeriesPathName(s);
+      try (RandomAccessOutputStream out = new RandomAccessOutputStream(path)) {
+        out.order(s.littleEndian);
+        out.seek(out.length());
+        if (!firstIFDOffsets.containsKey(path)) {
+          firstIFDOffsets.put(path, out.getFilePointer());
         }
-      }
-      else {
-        subs[s.index] = new long[s.planeCount][s.numberOfResolutions - 1];
-        for (int plane=0; plane<s.planeCount; plane++) {
-          for (int r=1; r<s.numberOfResolutions; r++) {
-            subs[s.index][plane][r - 1] = outStream.getFilePointer();
-            writeIFD(s, r, plane, r < s.numberOfResolutions - 1);
+
+        if (legacy) {
+          for (int res=0; res<s.numberOfResolutions; res++) {
+            for (int plane=0; plane<s.planeCount; plane++) {
+              boolean last = (res == s.numberOfResolutions - 1) &&
+                (plane == s.planeCount - 1);
+              writeIFD(out, s, res, plane, !last);
+            }
+          }
+          out.seek(FIRST_IFD_OFFSET);
+          out.writeLong(firstIFDOffsets.get(path));
+        }
+        else {
+          subs[s.index] = new long[s.planeCount][s.numberOfResolutions - 1];
+          for (int plane=0; plane<s.planeCount; plane++) {
+            for (int r=1; r<s.numberOfResolutions; r++) {
+              subs[s.index][plane][r - 1] = out.getFilePointer();
+              writeIFD(out, s, r, plane, r < s.numberOfResolutions - 1);
+            }
           }
         }
       }
     }
     // now write the full resolution IFD for each series
     if (!legacy) {
-      firstIFD = outStream.getFilePointer();
+      firstIFDOffsets.clear();
       for (PyramidSeries s : series) {
-        for (int plane=0; plane<s.planeCount; plane++) {
-          s.ifds[0].get(plane).put(IFD.SUB_IFD, subs[s.index][plane]);
-          writeIFD(s, 0, plane,
-            s.index < series.size() - 1 || plane < s.planeCount - 1);
+        String path = getSeriesPathName(s);
+        try (RandomAccessOutputStream out =
+          new RandomAccessOutputStream(path))
+        {
+          out.order(s.littleEndian);
+          out.seek(out.length());
+
+          if (!firstIFDOffsets.containsKey(path)) {
+            firstIFDOffsets.put(path, out.getFilePointer());
+          }
+
+          for (int plane=0; plane<s.planeCount; plane++) {
+            s.ifds[0].get(plane).put(IFD.SUB_IFD, subs[s.index][plane]);
+            boolean overwrite = plane < s.planeCount - 1;
+            if (!splitBySeries) {
+              overwrite = overwrite || s.index < series.size() - 1;
+            }
+            writeIFD(out, s, 0, plane, overwrite);
+          }
+          out.seek(FIRST_IFD_OFFSET);
+          out.writeLong(firstIFDOffsets.get(path));
         }
       }
     }
-
-    outStream.seek(FIRST_IFD_OFFSET);
-    outStream.writeLong(firstIFD);
   }
 
   /**
@@ -934,9 +998,13 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
    * The output stream should be positioned to the new IFD offset
    * before this method is called.
    *
+   * @param outStream open output file stream
    * @param offsetPointer pointer to the IFD offset that will be overwritten
+   * @throws IOException
    */
-  private void overwriteNextOffset(long offsetPointer) throws IOException {
+  private void overwriteNextOffset(
+    RandomAccessOutputStream outStream, long offsetPointer) throws IOException
+  {
     long fp = outStream.getFilePointer();
     outStream.seek(offsetPointer);
     outStream.writeLong(fp);
@@ -1016,8 +1084,9 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
     }
 
     // only write the OME-XML to the first full-resolution IFD
-    if (s.index == 0 && resolution == 0 && plane == 0) {
+    if ((s.index == 0 || splitBySeries) && resolution == 0 && plane == 0) {
       try {
+        metadata.setUUID(uuids.get(getSeriesPathName(s)));
         OMEXMLService service = getService();
         String omexml = service.getOMEXML(metadata);
         ifd.put(IFD.IMAGE_DESCRIPTION, omexml);
@@ -1086,23 +1155,34 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
     }
 
     byte[] realTile = tiffCompression.compress(buffer, options);
-    LOG.debug("    writing {} compressed bytes at {}",
-      realTile.length, outStream.getFilePointer());
 
-    writeToDisk(s, realTile, tileIndex, resolution, imageNumber);
+    try (RandomAccessOutputStream outStream =
+      new RandomAccessOutputStream(getSeriesPathName(s)))
+    {
+      outStream.order(s.littleEndian);
+      outStream.seek(outStream.length());
+
+      LOG.debug("    writing {} compressed bytes at {}",
+        realTile.length, outStream.getFilePointer());
+
+      writeToDisk(outStream, s, realTile, tileIndex, resolution, imageNumber);
+    }
   }
 
   /**
    * Write a pre-compressed buffer corresponding to the
    * given IFD and tile index.
    *
+   * @param outStream open output file stream
    * @param s current series
    * @param realTile array of compressed bytes representing the tile
    * @param tileIndex index into the array of tile offsets
    * @param resolution resolution index of the tile
    * @param imageNumber image index of the tile
    */
-  private synchronized void writeToDisk(PyramidSeries s,
+  private synchronized void writeToDisk(
+      RandomAccessOutputStream outStream,
+      PyramidSeries s,
       byte[] realTile, int tileIndex,
       int resolution, int imageNumber)
       throws FormatException, IOException
@@ -1135,20 +1215,23 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
   /**
    * Write the IFD for the given resolution and plane.
    *
+   * @param outStream open output file stream
    * @param s current series
    * @param resolution the resolution index
    * @param plane the plane index
    * @param overwrite true unless this is the last IFD in the list
    */
   private void writeIFD(
+    RandomAccessOutputStream outStream,
     PyramidSeries s, int resolution, int plane, boolean overwrite)
     throws FormatException, IOException
   {
+    TiffSaver writer = createTiffSaver(outStream, getSeriesPathName(s));
     int ifdSize = getIFDSize(s.ifds[resolution].get(plane));
     long offsetPointer = outStream.getFilePointer() + ifdSize;
     writer.writeIFD(s.ifds[resolution].get(plane), 0);
     if (overwrite) {
-      overwriteNextOffset(offsetPointer);
+      overwriteNextOffset(outStream, offsetPointer);
     }
   }
 
@@ -1184,6 +1267,17 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
       ).orElse("development");
     System.out.println("Version = " + version);
     System.out.println("Bio-Formats version = " + FormatTools.VERSION);
+  }
+
+  private void populateTiffData() {
+    for (PyramidSeries s : series) {
+      metadata.setUUIDFileName(
+        Paths.get(getSeriesPathName(s)).getFileName().toString(), s.index, 0);
+      metadata.setUUIDValue(uuids.get(getSeriesPathName(s)), s.index, 0);
+      if (splitBySeries) {
+        metadata.setTiffDataIFD(new NonNegativeInteger(0), s.index, 0);
+      }
+    }
   }
 
   /**
