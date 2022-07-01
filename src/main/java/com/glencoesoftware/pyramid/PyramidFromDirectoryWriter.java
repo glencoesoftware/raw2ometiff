@@ -1164,24 +1164,13 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
 
     byte[] realTile = tiffCompression.compress(buffer, options);
 
-    try (RandomAccessOutputStream outStream =
-      new RandomAccessOutputStream(getSeriesPathName(s)))
-    {
-      outStream.order(s.littleEndian);
-      outStream.seek(outStream.length());
-
-      LOG.debug("    writing {} compressed bytes at {}",
-        realTile.length, outStream.getFilePointer());
-
-      writeToDisk(outStream, s, realTile, tileIndex, resolution, imageNumber);
-    }
+    writeToDisk(s, realTile, tileIndex, resolution, imageNumber);
   }
 
   /**
    * Write a pre-compressed buffer corresponding to the
    * given IFD and tile index.
    *
-   * @param outStream open output file stream
    * @param s current series
    * @param realTile array of compressed bytes representing the tile
    * @param tileIndex index into the array of tile offsets
@@ -1189,7 +1178,6 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
    * @param imageNumber image index of the tile
    */
   private synchronized void writeToDisk(
-      RandomAccessOutputStream outStream,
       PyramidSeries s,
       byte[] realTile, int tileIndex,
       int resolution, int imageNumber)
@@ -1201,10 +1189,18 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
     // as both can return values other than what is in the IFD
     long[] offsets = ifd.getIFDLongArray(IFD.TILE_OFFSETS);
     long[] byteCounts = ifd.getIFDLongArray(IFD.TILE_BYTE_COUNTS);
-    offsets[tileIndex] = outStream.getFilePointer();
     byteCounts[tileIndex] = (long) realTile.length;
 
-    outStream.write(realTile);
+    String file = getSeriesPathName(s);
+    try (RandomAccessOutputStream out = new RandomAccessOutputStream(file)) {
+      out.seek(out.length());
+      offsets[tileIndex] = out.getFilePointer();
+
+      LOG.debug("    writing {} compressed bytes to {} at {}",
+        realTile.length, file, out.getFilePointer());
+
+      out.write(realTile);
+    }
 
     ifd.put(IFD.TILE_OFFSETS, offsets);
     ifd.put(IFD.TILE_BYTE_COUNTS, byteCounts);
