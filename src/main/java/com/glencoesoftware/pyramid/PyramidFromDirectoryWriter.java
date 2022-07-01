@@ -196,6 +196,7 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
   boolean rgb = false;
 
   private List<PyramidSeries> series = new ArrayList<PyramidSeries>();
+  private Map<String, TiffSaver> tiffSavers = new HashMap<String, TiffSaver>();
 
   private ZarrGroup reader = null;
 
@@ -766,14 +767,19 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
         w.writeHeader();
       }
     }
+    tiffSavers.remove(output);
   }
 
   private TiffSaver createTiffSaver(RandomAccessOutputStream out, String file) {
+    if (tiffSavers.containsKey(file)) {
+      return tiffSavers.get(file);
+    }
     TiffSaver w = new TiffSaver(out, file);
     w.setBigTiff(true);
     // assumes all series have same endian setting
     // series with opposite endianness are logged above
     w.setLittleEndian(series.get(0).littleEndian);
+    tiffSavers.put(file, w);
     return w;
   }
 
@@ -962,6 +968,7 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
           }
         }
       }
+      tiffSavers.remove(path);
     }
     // now write the full resolution IFD for each series
     if (!legacy) {
@@ -989,6 +996,7 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
           out.seek(FIRST_IFD_OFFSET);
           out.writeLong(firstIFDOffsets.get(path));
         }
+        tiffSavers.remove(path);
       }
     }
   }
