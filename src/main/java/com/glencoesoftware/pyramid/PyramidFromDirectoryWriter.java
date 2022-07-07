@@ -743,8 +743,19 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
       totalPlanes += s.planeCount;
 
       if (splitBySeries) {
-        seriesPaths.add(
-          Paths.get(outputFilePath.toString() + "_s" + s.index + ".ome.tiff"));
+        // remove [.ome].tif[f] suffix, if present
+        String basePath = outputFilePath.toString();
+        if (basePath.toLowerCase().endsWith(".tif") ||
+          basePath.toLowerCase().endsWith(".tiff"))
+        {
+          basePath = basePath.substring(0, basePath.lastIndexOf("."));
+          if (basePath.toLowerCase().endsWith(".ome")) {
+            basePath = basePath.substring(0, basePath.lastIndexOf("."));
+          }
+        }
+        // append the series index and file extension
+        basePath += "_s";
+        seriesPaths.add(Paths.get(basePath + s.index + ".ome.tiff"));
       }
       else {
         seriesPaths.add(outputFilePath);

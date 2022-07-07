@@ -113,8 +113,7 @@ public class ConversionTest {
       args.add(arg);
     }
     args.add(output.toString());
-    outputOmeTiff =
-      output.resolve(fileCount == 0 ? "output.ome.tiff" : "output");
+    outputOmeTiff = output.resolve("output.ome.tiff");
     args.add(outputOmeTiff.toString());
     try {
       writer = new PyramidFromDirectoryWriter();
@@ -123,12 +122,13 @@ public class ConversionTest {
         Assert.assertTrue(Files.exists(outputOmeTiff));
       }
       else {
+        String prefix = output.resolve("output").toString();
         for (int i=0; i<fileCount; i++) {
           Assert.assertTrue(Files.exists(
-            Paths.get(outputOmeTiff.toString() + "_s" + i + ".ome.tiff")));
+            Paths.get(prefix + "_s" + i + ".ome.tiff")));
         }
         Assert.assertFalse(Files.exists(
-            Paths.get(outputOmeTiff.toString() + "_s" +
+            Paths.get(prefix + "_s" +
             fileCount + ".ome.tiff")));
       }
     }
@@ -508,7 +508,7 @@ public class ConversionTest {
       OMEXMLMetadata metadata = xmlService.createOMEXMLMetadata();
       reader.setMetadataStore(metadata);
       reader.setFlattenedResolutions(false);
-      reader.setId(outputOmeTiff.toString() + "_s0.ome.tiff");
+      reader.setId(output.resolve("output").toString() + "_s0.ome.tiff");
 
       Assert.assertEquals(reader.getSeriesCount(), 24);
       Assert.assertEquals(1, metadata.getPlateCount());
