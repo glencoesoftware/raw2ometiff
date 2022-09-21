@@ -54,6 +54,7 @@ import ome.units.UNITS;
 import ome.units.quantity.Length;
 import ome.xml.meta.OMEXMLMetadataRoot;
 import ome.xml.model.Channel;
+import ome.xml.model.MapPair;
 import ome.xml.model.Pixels;
 import ome.xml.model.enums.DimensionOrder;
 import ome.xml.model.enums.EnumerationException;
@@ -66,8 +67,10 @@ import org.perf4j.StopWatch;
 import org.perf4j.slf4j.Slf4JStopWatch;
 
 import com.bc.zarr.DataType;
+import com.bc.zarr.JZarrException;
 import com.bc.zarr.ZarrArray;
 import com.bc.zarr.ZarrGroup;
+import com.bc.zarr.ZarrUtils;
 import ucar.ma2.InvalidRangeException;
 
 import picocli.CommandLine;
@@ -726,6 +729,38 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
 
       series.add(s);
       totalPlanes += s.planeCount;
+
+      // if OMERO rendering metadata is present in the Zarr attributes,
+      // copy it to a MapAnnotation
+      // this allows min/max values to be preserved and used by other tools
+      // that recognize the annotation
+      List<MapPair> renderingMap = new ArrayList<MapPair>();
+      try {
+        ZarrGroup z = getZarrGroup(s.path);
+        String omeroJSON = ZarrUtils.toJson(z.getAttributes().get("omero"));
+        renderingMap.add(new MapPair("omero", omeroJSON));
+      }
+      catch (JZarrException e) {
+        throw new FormatException("Could not get attributes for " + s.path, e);
+      }
+
+      int mapIndex = 0;
+      try {
+        mapIndex = metadata.getMapAnnotationCount();
+      }
+      catch (NullPointerException e) {
+        // expected when no annotations are present yet
+      }
+
+      // annotation ID and indexes are set to minimize the chance of
+      // clashing with an existing annotation
+      String annotationID = "Annotation:Rendering:" + seriesIndex;
+      metadata.setMapAnnotationID(annotationID, mapIndex);
+      metadata.setMapAnnotationNamespace(
+        "glencoesoftware.com/ngff/rendering", mapIndex);
+      metadata.setMapAnnotationValue(renderingMap, mapIndex);
+      metadata.setImageAnnotationRef(annotationID, seriesIndex,
+        metadata.getImageAnnotationRefCount(seriesIndex));
     }
 
     populateOriginalMetadata(service);
