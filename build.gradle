@@ -22,7 +22,7 @@ repositories {
         url 'https://repo.glencoesoftware.com/repository/bioformats2raw2ometiff/'
     }
     maven {
-        url 'http://nexus.senbox.net/nexus/content/groups/public'
+        url 'https://nexus.senbox.net/nexus/content/groups/public'
     }
     maven {
         url 'https://repo.glencoesoftware.com/repository/jzarr-snapshots'
