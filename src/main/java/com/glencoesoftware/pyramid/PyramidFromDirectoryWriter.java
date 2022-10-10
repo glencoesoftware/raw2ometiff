@@ -18,6 +18,7 @@ import java.util.Hashtable;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutorService;
@@ -511,7 +512,9 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
    * @return number of series
    */
   private int getSeriesCount() throws IOException {
-    int groupKeyCount = reader.getGroupKeys().size();
+    Set<String> groupKeys = reader.getGroupKeys();
+    groupKeys.remove("OME");
+    int groupKeyCount = groupKeys.size();
     LOG.debug("getSeriesCount:");
     LOG.debug("  plateData = {}", plateData);
     LOG.debug("  group key count = {}", groupKeyCount);
