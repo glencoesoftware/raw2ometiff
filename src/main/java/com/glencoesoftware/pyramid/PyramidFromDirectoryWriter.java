@@ -38,6 +38,7 @@ import loci.common.Region;
 import loci.common.services.DependencyException;
 import loci.common.services.ServiceException;
 import loci.common.services.ServiceFactory;
+import loci.common.xml.XMLTools;
 import loci.formats.FormatException;
 import loci.formats.FormatTools;
 import loci.formats.MetadataTools;
@@ -55,6 +56,7 @@ import ome.units.UNITS;
 import ome.units.quantity.Length;
 import ome.xml.meta.OMEXMLMetadataRoot;
 import ome.xml.model.Channel;
+import ome.xml.model.Image;
 import ome.xml.model.MapPair;
 import ome.xml.model.Pixels;
 import ome.xml.model.enums.DimensionOrder;
@@ -733,37 +735,36 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
       series.add(s);
       totalPlanes += s.planeCount;
 
-      // if OMERO rendering metadata is present in the Zarr attributes,
-      // copy it to a MapAnnotation
-      // this allows min/max values to be preserved and used by other tools
-      // that recognize the annotation
-      List<MapPair> renderingMap = new ArrayList<MapPair>();
+      // capture the OMERO rendering metadata in a few different annotations
+      // TODO: pick just one
       try {
         ZarrGroup z = getZarrGroup(s.path);
-        String omeroJSON = ZarrUtils.toJson(z.getAttributes().get("omero"));
-        renderingMap.add(new MapPair("omero", omeroJSON));
+        Map<String, Object> attrs =
+          (Map<String, Object>) z.getAttributes().get("omero");
+        if (attrs != null) {
+          // one MapAnnotation with one key/value pair
+          // where the value is the raw JSON
+          setSimpleMapAnnotation(attrs, seriesIndex);
+
+          // one MapAnnotation, one key/value pair per channel
+          // the key is the channel index, the value is a string representing
+          // two doubles separated by a single space
+          setMinMaxMapAnnotation(attrs, seriesIndex);
+
+          // two DoubleAnnotations (one min, one max) linked to each channel
+          setChannelMinMaxAnnotations(attrs, seriesIndex);
+
+          // one each of the remaining annotations which hold a single string
+          // the value is the raw JSON
+          setSimpleXMLAnnotation(attrs, seriesIndex);
+          setSimpleCommentAnnotation(attrs, seriesIndex);
+          setSimpleTagAnnotation(attrs, seriesIndex);
+          setSimpleTermAnnotation(attrs, seriesIndex);
+        }
       }
       catch (JZarrException e) {
         throw new FormatException("Could not get attributes for " + s.path, e);
       }
-
-      int mapIndex = 0;
-      try {
-        mapIndex = metadata.getMapAnnotationCount();
-      }
-      catch (NullPointerException e) {
-        // expected when no annotations are present yet
-      }
-
-      // annotation ID and indexes are set to minimize the chance of
-      // clashing with an existing annotation
-      String annotationID = "Annotation:Rendering:" + seriesIndex;
-      metadata.setMapAnnotationID(annotationID, mapIndex);
-      metadata.setMapAnnotationNamespace(
-        "glencoesoftware.com/ngff/rendering", mapIndex);
-      metadata.setMapAnnotationValue(renderingMap, mapIndex);
-      metadata.setImageAnnotationRef(annotationID, seriesIndex,
-        metadata.getImageAnnotationRefCount(seriesIndex));
     }
 
     populateOriginalMetadata(service);
@@ -1279,6 +1280,242 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
       return String.valueOf(((Double) attr).intValue());
     }
     return attr.toString();
+  }
+
+  private void setSimpleMapAnnotation(
+    Map<String, Object> attrs, int seriesIndex)
+    throws JZarrException
+  {
+    // if OMERO rendering metadata is present in the Zarr attributes,
+    // copy it to a MapAnnotation
+    // this allows min/max values to be preserved and used by other tools
+    // that recognize the annotation
+    List<MapPair> renderingMap = new ArrayList<MapPair>();
+    String omeroJSON = ZarrUtils.toJson(attrs);
+    renderingMap.add(new MapPair("omero", omeroJSON));
+
+    int mapIndex = 0;
+    try {
+      mapIndex = metadata.getMapAnnotationCount();
+    }
+    catch (NullPointerException e) {
+      // expected when no annotations are present yet
+    }
+
+    // annotation ID and indexes are set to minimize the chance of
+    // clashing with an existing annotation
+    String annotationID = getNextAnnotationID(seriesIndex);
+    metadata.setMapAnnotationID(annotationID, mapIndex);
+    metadata.setMapAnnotationNamespace(
+      "glencoesoftware.com/ngff/rendering", mapIndex);
+    metadata.setMapAnnotationValue(renderingMap, mapIndex);
+    metadata.setImageAnnotationRef(annotationID, seriesIndex,
+      metadata.getImageAnnotationRefCount(seriesIndex));
+  }
+
+  private void setMinMaxMapAnnotation(
+    Map<String, Object> attrs, int seriesIndex)
+  {
+    if (!attrs.containsKey("channels")) {
+      return;
+    }
+    List<MapPair> renderingMap = new ArrayList<MapPair>();
+    List<Map<String, Object>> channels =
+      (List<Map<String, Object>>) attrs.get("channels");
+
+    for (int c=0; c<channels.size(); c++) {
+      Map<String, Object> channel = channels.get(c);
+      Map<String, Object> window = (Map<String, Object>) channel.get("window");
+      Double min = (Double) window.get("min");
+      Double max = (Double) window.get("max");
+
+      // MapPair only allows string values
+      renderingMap.add(new MapPair(String.valueOf(c), min + " " + max));
+    }
+
+    int mapIndex = 0;
+    try {
+      mapIndex = metadata.getMapAnnotationCount();
+    }
+    catch (NullPointerException e) {
+      // expected when no annotations are present yet
+    }
+
+    // annotation ID and indexes are set to minimize the chance of
+    // clashing with an existing annotation
+    String annotationID = getNextAnnotationID(seriesIndex);
+    metadata.setMapAnnotationID(annotationID, mapIndex);
+    metadata.setMapAnnotationNamespace(
+      "glencoesoftware.com/ngff/rendering", mapIndex);
+    metadata.setMapAnnotationValue(renderingMap, mapIndex);
+    metadata.setImageAnnotationRef(annotationID, seriesIndex,
+      metadata.getImageAnnotationRefCount(seriesIndex));
+  }
+
+  private void setSimpleXMLAnnotation(
+    Map<String, Object> attrs, int seriesIndex)
+    throws JZarrException
+  {
+    String omeroJSON = ZarrUtils.toJson(attrs);
+    omeroJSON = XMLTools.escapeXML(omeroJSON);
+
+    int xmlIndex = 0;
+    try {
+      xmlIndex = metadata.getXMLAnnotationCount();
+    }
+    catch (NullPointerException e) {
+      // expected when no annotations are present yet
+    }
+
+    // annotation ID and indexes are set to minimize the chance of
+    // clashing with an existing annotation
+    String annotationID = getNextAnnotationID(seriesIndex);
+    metadata.setXMLAnnotationID(annotationID, xmlIndex);
+    metadata.setXMLAnnotationNamespace(
+      "glencoesoftware.com/ngff/rendering", xmlIndex);
+    metadata.setXMLAnnotationValue(omeroJSON, xmlIndex);
+    metadata.setImageAnnotationRef(annotationID, seriesIndex,
+      metadata.getImageAnnotationRefCount(seriesIndex));
+  }
+
+  private void setSimpleCommentAnnotation(
+    Map<String, Object> attrs, int seriesIndex)
+    throws JZarrException
+  {
+    String omeroJSON = ZarrUtils.toJson(attrs);
+
+    int commentIndex = 0;
+    try {
+      commentIndex = metadata.getCommentAnnotationCount();
+    }
+    catch (NullPointerException e) {
+      // expected when no annotations are present yet
+    }
+
+    // annotation ID and indexes are set to minimize the chance of
+    // clashing with an existing annotation
+    String annotationID = getNextAnnotationID(seriesIndex);
+    metadata.setCommentAnnotationID(annotationID, commentIndex);
+    metadata.setCommentAnnotationNamespace(
+      "glencoesoftware.com/ngff/rendering", commentIndex);
+    metadata.setCommentAnnotationValue(omeroJSON, commentIndex);
+    metadata.setImageAnnotationRef(annotationID, seriesIndex,
+      metadata.getImageAnnotationRefCount(seriesIndex));
+  }
+
+  private void setSimpleTagAnnotation(
+    Map<String, Object> attrs, int seriesIndex)
+    throws JZarrException
+  {
+    String omeroJSON = ZarrUtils.toJson(attrs);
+
+    int tagIndex = 0;
+    try {
+      tagIndex = metadata.getTagAnnotationCount();
+    }
+    catch (NullPointerException e) {
+      // expected when no annotations are present yet
+    }
+
+    // annotation ID and indexes are set to minimize the chance of
+    // clashing with an existing annotation
+    String annotationID = getNextAnnotationID(seriesIndex);
+    metadata.setTagAnnotationID(annotationID, tagIndex);
+    metadata.setTagAnnotationNamespace(
+      "glencoesoftware.com/ngff/rendering", tagIndex);
+    metadata.setTagAnnotationValue(omeroJSON, tagIndex);
+    metadata.setImageAnnotationRef(annotationID, seriesIndex,
+      metadata.getImageAnnotationRefCount(seriesIndex));
+  }
+
+  private void setSimpleTermAnnotation(
+    Map<String, Object> attrs, int seriesIndex)
+    throws JZarrException
+  {
+    String omeroJSON = ZarrUtils.toJson(attrs);
+
+    int termIndex = 0;
+    try {
+      termIndex = metadata.getTermAnnotationCount();
+    }
+    catch (NullPointerException e) {
+      // expected when no annotations are present yet
+    }
+
+    // annotation ID and indexes are set to minimize the chance of
+    // clashing with an existing annotation
+    String annotationID = getNextAnnotationID(seriesIndex);
+    metadata.setTermAnnotationID(annotationID, termIndex);
+    metadata.setTermAnnotationNamespace(
+      "glencoesoftware.com/ngff/rendering", termIndex);
+    metadata.setTermAnnotationValue(omeroJSON, termIndex);
+    metadata.setImageAnnotationRef(annotationID, seriesIndex,
+      metadata.getImageAnnotationRefCount(seriesIndex));
+  }
+
+  private void setChannelMinMaxAnnotations(
+    Map<String, Object> attrs, int seriesIndex)
+  {
+    if (!attrs.containsKey("channels")) {
+      return;
+    }
+    List<Map<String, Object>> channels =
+      (List<Map<String, Object>>) attrs.get("channels");
+
+    int doubleIndex = 0;
+    try {
+      doubleIndex = metadata.getDoubleAnnotationCount();
+    }
+    catch (NullPointerException e) {
+      // expected when no annotations are present yet
+    }
+
+    for (int c=0; c<channels.size(); c++) {
+      Map<String, Object> channel = channels.get(c);
+      Map<String, Object> window = (Map<String, Object>) channel.get("window");
+      Double min = (Double) window.get("min");
+      Double max = (Double) window.get("max");
+
+      String minAnnotationID =
+        "Annotation:Rendering:Channel:" + seriesIndex + ":" + (c * 2);
+      metadata.setDoubleAnnotationID(minAnnotationID, doubleIndex);
+      metadata.setDoubleAnnotationNamespace(
+        "glencoesoftware.com/ngff/rendering", doubleIndex);
+      metadata.setDoubleAnnotationDescription("channel min", doubleIndex);
+      metadata.setDoubleAnnotationValue(min, doubleIndex);
+      metadata.setChannelAnnotationRef(minAnnotationID, seriesIndex, c,
+        metadata.getChannelAnnotationRefCount(seriesIndex, c));
+
+      doubleIndex++;
+
+      String maxAnnotationID =
+        "Annotation:Rendering:Channel:" + seriesIndex + ":" + ((c * 2) + 1);
+      metadata.setDoubleAnnotationID(maxAnnotationID, doubleIndex);
+      metadata.setDoubleAnnotationNamespace(
+        "glencoesoftware.com/ngff/rendering", doubleIndex);
+      metadata.setDoubleAnnotationDescription("channel max", doubleIndex);
+      metadata.setDoubleAnnotationValue(max, doubleIndex);
+      metadata.setChannelAnnotationRef(maxAnnotationID, seriesIndex, c,
+        metadata.getChannelAnnotationRefCount(seriesIndex, c));
+
+      doubleIndex++;
+    }
+  }
+
+  private String getNextAnnotationID(int seriesIndex) {
+    String base = "Annotation:Rendering:" + seriesIndex + ":";
+    int start = 0;
+
+    metadata.resolveReferences();
+    OMEXMLMetadataRoot root = (OMEXMLMetadataRoot) metadata.getRoot();
+    Image img = root.getImage(seriesIndex);
+    for (int a=0; a<img.sizeOfLinkedAnnotationList(); a++) {
+      String annotationID = img.getLinkedAnnotation(a).getID();
+      if (annotationID.equals(base + start)) {
+        start++;
+      }
+    }
+    return base + start;
   }
 
 }
