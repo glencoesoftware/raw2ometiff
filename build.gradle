@@ -45,7 +45,7 @@ dependencies {
     implementation 'org.json:json:20190722'
     testImplementation 'junit:junit:4.12'
     testImplementation 'org.apache.commons:commons-lang3:3.12.0'
-    testImplementation 'com.glencoesoftware:bioformats2raw:0.3.0'
+    testImplementation 'com.glencoesoftware:bioformats2raw:0.5.0'
 }
 
 test {
