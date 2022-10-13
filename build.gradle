@@ -34,10 +34,10 @@ repositories {
 
 dependencies {
     implementation 'net.java.dev.jna:jna:5.10.0'
-    implementation 'com.bc.zarr:jzarr:0.3.3-gs-SNAPSHOT'
+    implementation 'com.bc.zarr:jzarr:0.3.5'
     implementation 'info.picocli:picocli:4.2.0'
     implementation 'me.tongfei:progressbar:0.9.0'
-    implementation 'ome:formats-bsd:6.4.0'
+    implementation 'ome:formats-bsd:6.10.1'
     // be careful here, this is a newer version of org.json:json than formats-gpl uses
     implementation 'org.json:json:20190722'
     testImplementation 'junit:junit:4.12'
