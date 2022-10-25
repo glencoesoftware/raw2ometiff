@@ -733,7 +733,6 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
       totalPlanes += s.planeCount;
 
       // capture the OMERO rendering metadata in a few different annotations
-      // TODO: pick just one
 
       ZarrGroup z = getZarrGroup(s.path);
       Map<String, Object> attrs =
@@ -742,9 +741,6 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
         // one MapAnnotation with two key/value pairs (min, max)
         // linked to each channel
         setChannelMinMaxMapAnnotation(attrs, seriesIndex);
-
-        // two DoubleAnnotations (one min, one max) linked to each channel
-        setChannelMinMaxAnnotations(attrs, seriesIndex);
       }
     }
 
@@ -1300,53 +1296,6 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
       metadata.setMapAnnotationValue(renderingMap, mapIndex);
       metadata.setChannelAnnotationRef(annotationID, seriesIndex, c,
         metadata.getChannelAnnotationRefCount(seriesIndex, c));
-    }
-  }
-
-  private void setChannelMinMaxAnnotations(
-    Map<String, Object> attrs, int seriesIndex)
-  {
-    if (!attrs.containsKey("channels")) {
-      return;
-    }
-    List<Map<String, Object>> channels =
-      (List<Map<String, Object>>) attrs.get("channels");
-
-    int doubleIndex = 0;
-    try {
-      doubleIndex = metadata.getDoubleAnnotationCount();
-    }
-    catch (NullPointerException e) {
-      // expected when no annotations are present yet
-    }
-
-    for (int c=0; c<channels.size(); c++) {
-      Map<String, Object> channel = channels.get(c);
-      Map<String, Object> window = (Map<String, Object>) channel.get("window");
-      Double min = (Double) window.get("min");
-      Double max = (Double) window.get("max");
-
-      String minAnnotationID = getNextAnnotationID(seriesIndex, c);
-      metadata.setDoubleAnnotationID(minAnnotationID, doubleIndex);
-      metadata.setDoubleAnnotationNamespace(
-        "glencoesoftware.com/ngff/rendering/min", doubleIndex);
-      metadata.setDoubleAnnotationDescription("channel min", doubleIndex);
-      metadata.setDoubleAnnotationValue(min, doubleIndex);
-      metadata.setChannelAnnotationRef(minAnnotationID, seriesIndex, c,
-        metadata.getChannelAnnotationRefCount(seriesIndex, c));
-
-      doubleIndex++;
-
-      String maxAnnotationID = getNextAnnotationID(seriesIndex, c);
-      metadata.setDoubleAnnotationID(maxAnnotationID, doubleIndex);
-      metadata.setDoubleAnnotationNamespace(
-        "glencoesoftware.com/ngff/rendering/max", doubleIndex);
-      metadata.setDoubleAnnotationDescription("channel max", doubleIndex);
-      metadata.setDoubleAnnotationValue(max, doubleIndex);
-      metadata.setChannelAnnotationRef(maxAnnotationID, seriesIndex, c,
-        metadata.getChannelAnnotationRefCount(seriesIndex, c));
-
-      doubleIndex++;
     }
   }
 
