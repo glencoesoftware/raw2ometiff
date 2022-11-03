@@ -37,6 +37,7 @@ import loci.formats.services.OMEXMLService;
 import loci.formats.tiff.IFD;
 import loci.formats.tiff.IFDList;
 import loci.formats.tiff.TiffParser;
+import ome.xml.model.MapPair;
 import picocli.CommandLine;
 import picocli.CommandLine.ExecutionException;
 
@@ -48,6 +49,9 @@ import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
 
 public class ConversionTest {
+
+  private static final String RENDERING_NAMESPACE =
+    "glencoesoftware.com/ngff/rendering";
 
   Path input;
 
@@ -458,6 +462,73 @@ public class ConversionTest {
       Assert.assertEquals(1, reader.getSeriesCount());
       Assert.assertEquals(1, metadata.getImageCount());
       Assert.assertEquals(0, metadata.getPlateCount());
+    }
+  }
+
+  /**
+   * Make sure each channel has a MapAnnotation with min/max values.
+   */
+  @Test
+  public void testMinMaxAnnotation() throws Exception {
+    input = fake("sizeC", "4");
+    assertBioFormats2Raw();
+    assertTool();
+
+    try (ImageReader reader = new ImageReader()) {
+      ServiceFactory sf = new ServiceFactory();
+      OMEXMLService xmlService = sf.getInstance(OMEXMLService.class);
+      OMEXMLMetadata metadata = xmlService.createOMEXMLMetadata();
+      reader.setMetadataStore(metadata);
+      reader.setFlattenedResolutions(false);
+      reader.setId(outputOmeTiff.toString());
+
+      Assert.assertEquals(4, reader.getSizeC());
+      for (int c=0; c<reader.getSizeC(); c++) {
+        String annotationID = metadata.getChannelAnnotationRef(0, c, 0);
+        Assert.assertNotNull(annotationID);
+
+        boolean foundMinMaxAnnotation = false;
+        for (int m=0; m<metadata.getMapAnnotationCount(); m++) {
+          String mapID = metadata.getMapAnnotationID(m);
+          if (mapID.equals(annotationID)) {
+            foundMinMaxAnnotation = true;
+
+            String namespace = metadata.getMapAnnotationNamespace(m);
+            Assert.assertEquals(RENDERING_NAMESPACE, namespace);
+            List<MapPair> map = metadata.getMapAnnotationValue(m);
+            Assert.assertEquals(2, map.size());
+
+            boolean foundMin = false;
+            boolean foundMax = false;
+            for (MapPair pair : map) {
+              String name = pair.getName();
+              String value = pair.getValue();
+              if (name.equals("min")) {
+                Assert.assertEquals(0, (int) Double.parseDouble(value));
+                foundMin = true;
+              }
+              else if (name.equals("max")) {
+                Assert.assertEquals(255, (int) Double.parseDouble(value));
+                foundMax = true;
+              }
+              else {
+                Assert.fail("Invalid MapPair name: " + name);
+              }
+            }
+            if (!foundMin) {
+              Assert.fail("Missing MapPair 'min'");
+            }
+            if (!foundMax) {
+              Assert.fail("Missing MapPair 'max'");
+            }
+
+            break;
+          }
+        }
+        if (!foundMinMaxAnnotation) {
+          Assert.fail("MapAnnotation '" + annotationID + "' not found");
+        }
+      }
     }
   }
 
