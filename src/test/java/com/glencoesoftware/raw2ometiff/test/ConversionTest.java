@@ -245,7 +245,10 @@ public class ConversionTest {
 
   private void assertDefaults() throws Exception {
     ZarrArray series0 = ZarrGroup.open(output.resolve("0")).openArray("0");
-    Assert.assertTrue(series0.getNested());
+    // no getter for DimensionSeparator in ZarrArray
+    // check that the correct separator was used by checking
+    // that the expected first chunk file exists
+    Assert.assertTrue(output.resolve("0/0/0/0/0/0/0").toFile().exists());
     // Also ensure we're using the latest .zarray metadata
     ObjectMapper objectMapper = new ObjectMapper();
     JsonNode root = objectMapper.readTree(
