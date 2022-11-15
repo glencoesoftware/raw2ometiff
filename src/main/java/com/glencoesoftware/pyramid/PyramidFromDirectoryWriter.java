@@ -183,7 +183,8 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
 
   @Option(
       names = "--rgb",
-      description = "Attempt to write channels as RGB; channel count must be 3"
+      description = "Attempt to write channels as RGB; " +
+                    "channel count must be a multiple of 3"
   )
   boolean rgb = false;
 
@@ -679,20 +680,41 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
       s.dimensionLengths[s.dimensionOrder.indexOf("T") - 2] = s.t;
       s.dimensionLengths[s.dimensionOrder.indexOf("C") - 2] = s.c;
 
-      s.rgb = rgb && (s.c == 3);
-      if (!s.rgb) {
-        s.planeCount *= s.c;
-      }
-      else {
+      int rgbChannels = 1;
+      int effectiveChannels = s.c;
+
+      // --rgb flag only respected if the number of channels in the source data
+      // is a multiple of 3
+      // this assumes that channels should be grouped by 3s (not 2s or 4s)
+      // into RGB planes
+      // this could be made configurable later?
+      s.rgb = rgb && (s.c % 3 == 0);
+      if (s.rgb) {
+        rgbChannels = 3;
+        effectiveChannels = s.c / rgbChannels;
+        LOG.debug("Merging {} original channels into {} RGB channels",
+          s.c, effectiveChannels);
+
         OMEXMLMetadataRoot root = (OMEXMLMetadataRoot) metadata.getRoot();
         Pixels pixels = root.getImage(seriesIndex).getPixels();
-        while (pixels.sizeOfChannelList() > 1) {
-          Channel ch = pixels.getChannel(pixels.sizeOfChannelList() - 1);
+        for (int index=pixels.sizeOfChannelList()-1; index>0; index--) {
+          if (index % rgbChannels == 0) {
+            continue;
+          }
+          Channel ch = pixels.getChannel(index);
           pixels.removeChannel(ch);
         }
-        Channel onlyChannel = pixels.getChannel(0);
-        onlyChannel.setSamplesPerPixel(new PositiveInteger(s.c));
+        for (int index=0; index<pixels.sizeOfChannelList(); index++) {
+          Channel channel = pixels.getChannel(index);
+          channel.setSamplesPerPixel(new PositiveInteger(rgbChannels));
+        }
       }
+      else if (rgb) {
+        LOG.warn(
+          "Ignoring --rgb flag; channel count {} is not a multiple of 3", s.c);
+      }
+
+      s.planeCount *= effectiveChannels;
 
       s.describePyramid(reader, metadata);
 
@@ -708,7 +730,8 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
           MetadataTools.populateMetadata(
             this.metadata, seriesIndex, null, s.littleEndian, s.dimensionOrder,
             FormatTools.getPixelTypeString(s.pixelType),
-            descriptor.sizeX, descriptor.sizeY, s.z, s.c, s.t, s.rgb ? s.c : 1);
+            descriptor.sizeX, descriptor.sizeY, s.z, s.c, s.t,
+            rgbChannels);
         }
         else {
           if (legacy) {
@@ -716,7 +739,7 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
               descriptor.resolutionNumber, null, s.littleEndian,
               s.dimensionOrder, FormatTools.getPixelTypeString(s.pixelType),
               descriptor.sizeX, descriptor.sizeY,
-              s.z, s.c, s.t, s.rgb ? s.c : 1);
+              s.z, s.c, s.t, rgbChannels);
           }
           else {
             metadata.setResolutionSizeX(new PositiveInteger(
@@ -776,7 +799,7 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
       }
     }
 
-    int rgbChannels = s.rgb ? s.c : 1;
+    int rgbChannels = s.rgb ? 3 : 1;
     int bytesPerPixel = FormatTools.getBytesPerPixel(s.pixelType);
     try {
       for (int resolution=0; resolution<s.numberOfResolutions; resolution++) {
@@ -996,7 +1019,7 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
 
     ifd.put(IFD.SAMPLE_FORMAT, sampleFormat);
 
-    int[] bps = new int[s.rgb ? s.c : 1];
+    int[] bps = new int[s.rgb ? 3 : 1];
     Arrays.fill(bps, FormatTools.getBytesPerPixel(s.pixelType) * 8);
     ifd.put(IFD.BITS_PER_SAMPLE, bps);
 

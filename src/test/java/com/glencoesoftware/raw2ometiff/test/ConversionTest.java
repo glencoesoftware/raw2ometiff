@@ -210,6 +210,9 @@ public class ConversionTest {
           inputReader.setSeries(series);
           outputReader.setSeries(series);
 
+          Assert.assertEquals(
+            inputReader.getImageCount(), outputReader.getImageCount());
+          Assert.assertEquals(inputReader.getSizeC(), outputReader.getSizeC());
           for (int plane=0; plane<inputReader.getImageCount(); plane++) {
             Object inputPlane = getPlane(inputReader, plane);
             Object outputPlane = getPlane(outputReader, plane);
@@ -395,6 +398,28 @@ public class ConversionTest {
     input = fake("sizeX", "497", "sizeY", "498", "pixelType", "uint16");
     assertBioFormats2Raw("-w", "128", "-h", "128");
     assertTool();
+    iteratePixels();
+  }
+
+  /**
+   * Test RGB with multiple timepoints.
+   */
+  @Test
+  public void testRGBMultiT() throws Exception {
+    input = fake("sizeC", "3", "sizeT", "5", "rgb", "3");
+    assertBioFormats2Raw();
+    assertTool("--rgb");
+    iteratePixels();
+  }
+
+  /**
+   * Test RGB with multiple channels.
+   */
+  @Test
+  public void testRGBMultiC() throws Exception {
+    input = fake("sizeC", "12", "rgb", "3");
+    assertBioFormats2Raw();
+    assertTool("--rgb");
     iteratePixels();
   }
 
