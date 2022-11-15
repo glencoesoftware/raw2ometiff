@@ -78,12 +78,12 @@ public class PyramidSeries {
       descriptor.tileSizeY = blockSizes[blockSizes.length - 2];
 
       if (descriptor.tileSizeX % 16 != 0) {
-        LOG.warn("Tile width ({}) not a multiple of 16; correcting",
+        LOG.debug("Tile width ({}) not a multiple of 16; correcting",
           descriptor.tileSizeX);
         descriptor.tileSizeX += (16 - (descriptor.tileSizeX % 16));
       }
       if (descriptor.tileSizeY % 16 != 0) {
-        LOG.warn("Tile height ({}) not a multiple of 16; correcting",
+        LOG.debug("Tile height ({}) not a multiple of 16; correcting",
           descriptor.tileSizeY);
         descriptor.tileSizeY += (16 - (descriptor.tileSizeY % 16));
       }
