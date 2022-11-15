@@ -679,7 +679,7 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
       s.dimensionLengths[s.dimensionOrder.indexOf("T") - 2] = s.t;
       s.dimensionLengths[s.dimensionOrder.indexOf("C") - 2] = s.c;
 
-      s.rgb = rgb && (s.c == 3) && (s.z * s.t == 1);
+      s.rgb = rgb && (s.c == 3);
       if (!s.rgb) {
         s.planeCount *= s.c;
       }
