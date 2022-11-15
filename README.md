@@ -73,6 +73,14 @@ Tile compression is performed in parallel.  The number of workers can be changed
 `axes` and `transformations` metadata in the input Zarr will be ignored. This metadata is assumed to be consistent
 with the corresponding `PhysicalSize*`, `TimeIncrement`, and `DimensionOrder` values in the input `METADATA.ome.xml`.
 
+For non-plate data, a `MapAnnotation` with namespace `glencoesoftware.com/ngff/rendering` will be linked to each `Channel` in the OME-XML.
+This `MapAnnotation` records the minimum (key `min`) and maximum (key `max`) pixel values for the channel.
+This information is taken from the `min` and `max` values under `omero` in the input Zarr dataset, as described in https://ngff.openmicroscopy.org/latest/#omero-md.
+If `omero` metadata was not recorded in the input Zarr dataset, annotations will be omitted.
+For plate data, annotations will only be written if the `--force-channel-annotations` option is used. Linking an annotation to every `Channel` in
+a plate is known to cause performance issues when importing the resulting file into OMERO.
+See the discussion around https://github.com/glencoesoftware/raw2ometiff/pull/82#pullrequestreview-1179070542
+
 Areas to improve
 ================
 

@@ -440,6 +440,45 @@ public class ConversionTest {
       Assert.assertEquals(24, reader.getSeriesCount());
       Assert.assertEquals(24, metadata.getImageCount());
       Assert.assertEquals(1, metadata.getPlateCount());
+
+      for (int series=0; series<metadata.getImageCount(); series++) {
+        int channelCount = metadata.getChannelCount(series);
+        for (int channel=0; channel<channelCount; channel++) {
+          int refCount = metadata.getChannelAnnotationRefCount(series, channel);
+          Assert.assertEquals(0, refCount);
+        }
+      }
+    }
+  }
+
+  /**
+   * Test larger plate with min/max annotations.
+   */
+  @Test
+  public void testPlateWithAnnotations() throws Exception {
+    input =
+      fake("plateRows", "8", "plateCols", "12", "fields", "4", "sizeC", "4");
+    assertBioFormats2Raw();
+    assertTool("--force-channel-annotations");
+    iteratePixels();
+    try (ImageReader reader = new ImageReader()) {
+      ServiceFactory sf = new ServiceFactory();
+      OMEXMLService xmlService = sf.getInstance(OMEXMLService.class);
+      OMEXMLMetadata metadata = xmlService.createOMEXMLMetadata();
+      reader.setMetadataStore(metadata);
+      reader.setFlattenedResolutions(false);
+      reader.setId(outputOmeTiff.toString());
+      Assert.assertEquals(384, reader.getSeriesCount());
+      Assert.assertEquals(384, metadata.getImageCount());
+      Assert.assertEquals(1, metadata.getPlateCount());
+
+      for (int series=0; series<metadata.getImageCount(); series++) {
+        int channelCount = metadata.getChannelCount(series);
+        for (int channel=0; channel<channelCount; channel++) {
+          int refCount = metadata.getChannelAnnotationRefCount(series, channel);
+          Assert.assertEquals(1, refCount);
+        }
+      }
     }
   }
 
@@ -462,6 +501,14 @@ public class ConversionTest {
       Assert.assertEquals(1, reader.getSeriesCount());
       Assert.assertEquals(1, metadata.getImageCount());
       Assert.assertEquals(0, metadata.getPlateCount());
+
+      for (int series=0; series<metadata.getImageCount(); series++) {
+        int channelCount = metadata.getChannelCount(series);
+        for (int channel=0; channel<channelCount; channel++) {
+          int refCount = metadata.getChannelAnnotationRefCount(series, channel);
+          Assert.assertEquals(1, refCount);
+        }
+      }
     }
   }
 

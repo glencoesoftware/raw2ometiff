@@ -189,6 +189,12 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
   )
   boolean rgb = false;
 
+  @Option(
+      names = "--force-channel-annotations",
+      description = "Write channel min/max annotations for plate data"
+  )
+  boolean forceChannelAnnotations = false;
+
   private List<PyramidSeries> series = new ArrayList<PyramidSeries>();
 
   private ZarrGroup reader = null;
@@ -733,14 +739,22 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
       totalPlanes += s.planeCount;
 
       // capture the OMERO rendering metadata in a few different annotations
-
-      ZarrGroup z = getZarrGroup(s.path);
-      Map<String, Object> attrs =
-        (Map<String, Object>) z.getAttributes().get("omero");
-      if (attrs != null) {
-        // one MapAnnotation with two key/value pairs (min, max)
-        // linked to each channel
-        setChannelMinMaxMapAnnotation(attrs, seriesIndex);
+      // by default, do not write annotations if this data represents a plate
+      // per-channel annotations on plates can result in tens of thousands
+      // of references, which can cause problems during OMERO import
+      // the --force-channel-annotations option allows the annotations
+      // to be written anyway if the benefits to min/max annotations
+      // outweight the risks for a particular plate
+      // see discussion https://github.com/glencoesoftware/raw2ometiff/pull/82
+      if (plateData == null || forceChannelAnnotations) {
+        ZarrGroup z = getZarrGroup(s.path);
+        Map<String, Object> attrs =
+          (Map<String, Object>) z.getAttributes().get("omero");
+        if (attrs != null) {
+          // one MapAnnotation with two key/value pairs (min, max)
+          // linked to each channel
+          setChannelMinMaxMapAnnotation(attrs, seriesIndex);
+        }
       }
     }
 
