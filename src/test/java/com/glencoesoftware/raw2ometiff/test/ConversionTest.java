@@ -383,8 +383,19 @@ public class ConversionTest {
   public void testOddTileSize() throws Exception {
     input = fake("pixelType", "uint16");
     assertBioFormats2Raw("-w", "17", "-h", "19");
-    assertTool();
+    assertTool("--compression", "raw");
     iteratePixels();
+
+    try (TiffParser parser = new TiffParser(outputOmeTiff.toString())) {
+      IFDList mainIFDs = parser.getMainIFDs();
+      Assert.assertEquals(1, mainIFDs.size());
+      int tileSize = 32 * 32 * 2;
+      long[] tileByteCounts = mainIFDs.get(0).getStripByteCounts();
+      Assert.assertEquals(256, tileByteCounts.length);
+      for (long count : tileByteCounts) {
+        Assert.assertEquals(tileSize, count);
+      }
+    }
   }
 
   /**
