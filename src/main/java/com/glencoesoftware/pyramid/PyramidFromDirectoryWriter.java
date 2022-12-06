@@ -183,7 +183,8 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
 
   @Option(
       names = "--rgb",
-      description = "Attempt to write channels as RGB; channel count must be 3"
+      description = "Attempt to write channels as RGB; " +
+                    "channel count must be a multiple of 3"
   )
   boolean rgb = false;
 
@@ -679,20 +680,51 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
       s.dimensionLengths[s.dimensionOrder.indexOf("T") - 2] = s.t;
       s.dimensionLengths[s.dimensionOrder.indexOf("C") - 2] = s.c;
 
-      s.rgb = rgb && (s.c == 3) && (s.z * s.t == 1);
-      if (!s.rgb) {
-        s.planeCount *= s.c;
-      }
-      else {
+      int rgbChannels = 1;
+      int effectiveChannels = s.c;
+
+      // --rgb flag only respected if the number of channels in the source data
+      // is a multiple of 3
+      // this assumes that channels should be grouped by 3s (not 2s or 4s)
+      // into RGB planes
+      // this could be made configurable later?
+      s.rgb = rgb && (s.c % 3 == 0);
+      if (s.rgb) {
+        rgbChannels = 3;
+        effectiveChannels = s.c / rgbChannels;
+        LOG.debug("Merging {} original channels into {} RGB channels",
+          s.c, effectiveChannels);
+
         OMEXMLMetadataRoot root = (OMEXMLMetadataRoot) metadata.getRoot();
         Pixels pixels = root.getImage(seriesIndex).getPixels();
-        while (pixels.sizeOfChannelList() > 1) {
-          Channel ch = pixels.getChannel(pixels.sizeOfChannelList() - 1);
+        for (int index=pixels.sizeOfChannelList()-1; index>0; index--) {
+          if (index % rgbChannels == 0) {
+            continue;
+          }
+          Channel ch = pixels.getChannel(index);
           pixels.removeChannel(ch);
         }
-        Channel onlyChannel = pixels.getChannel(0);
-        onlyChannel.setSamplesPerPixel(new PositiveInteger(s.c));
+        for (int index=0; index<pixels.sizeOfChannelList(); index++) {
+          Channel channel = pixels.getChannel(index);
+          channel.setSamplesPerPixel(new PositiveInteger(rgbChannels));
+        }
+
+        // RGB data needs to have XYC* dimension order
+        if (!s.dimensionOrder.startsWith("XYC")) {
+          if (s.dimensionOrder.indexOf("Z") < s.dimensionOrder.indexOf("T")) {
+            s.dimensionOrder = "XYCZT";
+          }
+          else {
+            s.dimensionOrder = "XYCTZ";
+          }
+        }
       }
+      else if (rgb) {
+        LOG.warn(
+          "Ignoring --rgb flag; channel count {} is not a multiple of 3", s.c);
+      }
+
+      s.planeCount *= effectiveChannels;
 
       s.describePyramid(reader, metadata);
 
@@ -708,7 +740,8 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
           MetadataTools.populateMetadata(
             this.metadata, seriesIndex, null, s.littleEndian, s.dimensionOrder,
             FormatTools.getPixelTypeString(s.pixelType),
-            descriptor.sizeX, descriptor.sizeY, s.z, s.c, s.t, s.rgb ? s.c : 1);
+            descriptor.sizeX, descriptor.sizeY, s.z, s.c, s.t,
+            rgbChannels);
         }
         else {
           if (legacy) {
@@ -716,7 +749,7 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
               descriptor.resolutionNumber, null, s.littleEndian,
               s.dimensionOrder, FormatTools.getPixelTypeString(s.pixelType),
               descriptor.sizeX, descriptor.sizeY,
-              s.z, s.c, s.t, s.rgb ? s.c : 1);
+              s.z, s.c, s.t, rgbChannels);
           }
           else {
             metadata.setResolutionSizeX(new PositiveInteger(
@@ -776,7 +809,7 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
       }
     }
 
-    int rgbChannels = s.rgb ? s.c : 1;
+    int rgbChannels = s.rgb ? 3 : 1;
     int bytesPerPixel = FormatTools.getBytesPerPixel(s.pixelType);
     try {
       for (int resolution=0; resolution<s.numberOfResolutions; resolution++) {
@@ -803,77 +836,88 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
           pb = null;
         }
 
-        for (int plane=0; plane<s.planeCount; plane++) {
-          int tileIndex = 0;
-          // if the resolution has already been calculated,
-          // just read each tile from disk and store in the OME-TIFF
-          for (int y = 0; y < descriptor.numberOfTilesY; y++) {
-            for (int x = 0; x < descriptor.numberOfTilesX; x++, tileIndex++) {
-              Region region = new Region(
-                x * descriptor.tileSizeX,
-                y * descriptor.tileSizeY, 0, 0);
-              region.width = (int) Math.min(
-                descriptor.tileSizeX, descriptor.sizeX - region.x);
-              region.height = (int) Math.min(
-                descriptor.tileSizeY, descriptor.sizeY - region.y);
+        int plane = 0;
+        for (int t=0; t<s.t; t++) {
+          for (int c=0; c<(s.c / rgbChannels); c++) {
+            for (int z=0; z<s.z; z++, plane++) {
+              int tileIndex = 0;
+              // if the resolution has already been calculated,
+              // just read each tile from disk and store in the OME-TIFF
+              for (int y=0; y<descriptor.numberOfTilesY; y++) {
+                for (int x=0; x<descriptor.numberOfTilesX; x++, tileIndex++) {
+                  Region region = new Region(
+                    x * descriptor.tileSizeX,
+                    y * descriptor.tileSizeY, 0, 0);
+                  region.width = (int) Math.min(
+                    descriptor.tileSizeX, descriptor.sizeX - region.x);
+                  region.height = (int) Math.min(
+                    descriptor.tileSizeY, descriptor.sizeY - region.y);
 
-              if (region.width <= 0 || region.height <= 0) {
-                continue;
-              }
+                  if (region.width <= 0 || region.height <= 0) {
+                    continue;
+                  }
 
-              for (int ch=0; ch<rgbChannels; ch++) {
-                StopWatch t0 = new Slf4JStopWatch("getInputTileBytes");
-                byte[] tileBytes;
-                try {
-                  int planeIndex = plane * rgbChannels + ch;
-                  tileBytes =
-                    getInputTileBytes(s, resolution, planeIndex, x, y, region);
-                }
-                finally {
-                  t0.stop();
-                }
+                  for (int ch=0; ch<rgbChannels; ch++) {
+                    StopWatch t0 = new Slf4JStopWatch("getInputTileBytes");
+                    byte[] tileBytes;
+                    try {
+                      // assumes TCZYX order consistent with bioformats2raw
+                      int planeIndex = FormatTools.positionToRaster(
+                        s.dimensionLengths,
+                        new int[] {z, c * rgbChannels + ch, t});
+                      tileBytes =
+                        getInputTileBytes(s, resolution, planeIndex,
+                        x, y, region);
+                    }
+                    finally {
+                      t0.stop();
+                    }
 
-                final int currentIndex = tileCount * ch + tileIndex;
-                final int currentPlane = plane;
-                final int currentResolution = resolution;
-                executor.execute(() -> {
-                  Slf4JStopWatch t1 = new Slf4JStopWatch("writeTile");
-                  try {
-                    if (tileBytes != null) {
-                      if (region.width == descriptor.tileSizeX &&
-                        region.height == descriptor.tileSizeY)
-                      {
-                        writeTile(s, currentPlane, tileBytes,
-                          currentIndex, currentResolution);
-                      }
-                      else {
-                        // padded tile, use descriptor X and Y tile size
-                        byte[] realTile =
-                          new byte[descriptor.tileSizeX * descriptor.tileSizeY
-                                   * bytesPerPixel];
-                        int totalRows = region.height;
-                        int inRowLen = region.width * bytesPerPixel;
-                        int outRowLen = descriptor.tileSizeX * bytesPerPixel;
-                        for (int row=0; row<totalRows; row++) {
-                          System.arraycopy(tileBytes, row * inRowLen,
-                            realTile, row * outRowLen, inRowLen);
+                    final int currentIndex = tileCount * ch + tileIndex;
+                    final int currentPlane = plane;
+                    final int currentResolution = resolution;
+                    executor.execute(() -> {
+                      Slf4JStopWatch t1 = new Slf4JStopWatch("writeTile");
+                      try {
+                        if (tileBytes != null) {
+                          if (region.width == descriptor.tileSizeX &&
+                            region.height == descriptor.tileSizeY)
+                          {
+                            writeTile(s, currentPlane, tileBytes,
+                              currentIndex, currentResolution);
+                          }
+                          else {
+                            // padded tile, use descriptor X and Y tile size
+                            int tileX = descriptor.tileSizeX;
+                            int tileY = descriptor.tileSizeY;
+                            byte[] realTile =
+                              new byte[tileX * tileY * bytesPerPixel];
+                            int totalRows = region.height;
+                            int inRowLen = region.width * bytesPerPixel;
+                            int outRowLen = tileX * bytesPerPixel;
+                            for (int row=0; row<totalRows; row++) {
+                              System.arraycopy(tileBytes, row * inRowLen,
+                                realTile, row * outRowLen, inRowLen);
+                            }
+                            writeTile(s, currentPlane, realTile,
+                              currentIndex, currentResolution);
+                          }
                         }
-                        writeTile(s, currentPlane, realTile,
-                          currentIndex, currentResolution);
                       }
-                    }
+                      catch (FormatException|IOException e) {
+                        LOG.error(
+                          "Failed to write tile in series {} resolution {}",
+                          s.index, currentResolution, e);
+                      }
+                      finally {
+                        t1.stop();
+                        if (pb != null) {
+                          pb.step();
+                        }
+                      }
+                    });
                   }
-                  catch (FormatException|IOException e) {
-                    LOG.error("Failed to write tile in series {} resolution {}",
-                      s.index, currentResolution, e);
-                  }
-                  finally {
-                    t1.stop();
-                    if (pb != null) {
-                      pb.step();
-                    }
-                  }
-                });
+                }
               }
             }
           }
@@ -996,7 +1040,7 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
 
     ifd.put(IFD.SAMPLE_FORMAT, sampleFormat);
 
-    int[] bps = new int[s.rgb ? s.c : 1];
+    int[] bps = new int[s.rgb ? 3 : 1];
     Arrays.fill(bps, FormatTools.getBytesPerPixel(s.pixelType) * 8);
     ifd.put(IFD.BITS_PER_SAMPLE, bps);
 
