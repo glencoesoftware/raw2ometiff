@@ -861,7 +861,7 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
                     StopWatch t0 = new Slf4JStopWatch("getInputTileBytes");
                     byte[] tileBytes;
                     try {
-                      // assumes TCZXY order consistent with OME-NGFF spec
+                      // assumes TCZYX order consistent with bioformats2raw
                       int planeIndex = FormatTools.positionToRaster(
                         s.dimensionLengths,
                         new int[] {z, c * rgbChannels + ch, t});
