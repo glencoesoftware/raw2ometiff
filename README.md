@@ -94,13 +94,6 @@ Tile compression is performed in parallel.  The number of workers can be changed
 `axes` and `transformations` metadata in the input Zarr will be ignored. This metadata is assumed to be consistent
 with the corresponding `PhysicalSize*`, `TimeIncrement`, and `DimensionOrder` values in the input `METADATA.ome.xml`.
 
-Areas to improve
-================
-
-* Compatibility with both iSyntax and .mrxs
-    - map JSON metadata to OME-XML (magnification etc.)
-    - fix tile sizes used when downsampling (TIFF input only)
-
 License
 =======
 
