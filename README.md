@@ -40,10 +40,19 @@ Configuring Logging
 
 Logging is provided using the logback library. The `logback.xml` file in `src/dist/lib/config/` provides a default configuration for the command line tool.
 In release and snapshot artifacts, `logback.xml` is in `lib/config/`.
-You can configure logging by editing the provided `logback.xml` or by specifying the path to a different file::
+You can configure logging by editing the provided `logback.xml` or by specifying the path to a different file:
 
-JAVA_OPTS="-Dlogback.configurationFile=/path/to/external/logback.xml" \
-    bioformats2raw ...
+    JAVA_OPTS="-Dlogback.configurationFile=/path/to/external/logback.xml" \
+    raw2ometiff ...
+
+Alternatively you can use the `--debug` flag, optionally writing the stdout to a file:
+
+    raw2ometiff /path/to/zarr-pyramid /path/to/file.ome.tiff --debug > raw2ometiff.log
+
+The `--log-level` option takes an [slf4j logging level](https://www.slf4j.org/faq.html#fatal) for additional simple logging configuration.
+`--log-level DEBUG` is equivalent to `--debug`. For even more verbose logging:
+
+    raw2ometiff /path/to/zarr-pyramid /path/to/file.ome.tiff --log-level TRACE
 
 Eclipse Configuration
 =====================
@@ -84,13 +93,6 @@ Tile compression is performed in parallel.  The number of workers can be changed
 
 `axes` and `transformations` metadata in the input Zarr will be ignored. This metadata is assumed to be consistent
 with the corresponding `PhysicalSize*`, `TimeIncrement`, and `DimensionOrder` values in the input `METADATA.ome.xml`.
-
-Areas to improve
-================
-
-* Compatibility with both iSyntax and .mrxs
-    - map JSON metadata to OME-XML (magnification etc.)
-    - fix tile sizes used when downsampling (TIFF input only)
 
 License
 =======
