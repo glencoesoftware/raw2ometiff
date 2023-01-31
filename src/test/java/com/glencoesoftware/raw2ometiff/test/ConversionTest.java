@@ -40,8 +40,6 @@ import loci.formats.tiff.TiffParser;
 import picocli.CommandLine;
 import picocli.CommandLine.ExecutionException;
 
-import ome.xml.model.primitives.Color;
-
 import org.apache.commons.lang3.SystemUtils;
 import org.junit.Assert;
 import org.junit.Assume;
@@ -494,10 +492,7 @@ public class ConversionTest {
       Assert.assertEquals(1, metadata.getChannelCount(0));
       Assert.assertEquals(
           3, metadata.getChannelSamplesPerPixel(0, 0).getNumberValue());
-      Color color =  metadata.getChannelColor(0, 0);
-      Assert.assertEquals(0, color.getRed());
-      Assert.assertEquals(255, color.getGreen());
-      Assert.assertEquals(0, color.getBlue());
+      Assert.assertNull(metadata.getChannelColor(0, 0));
     }
   }
 

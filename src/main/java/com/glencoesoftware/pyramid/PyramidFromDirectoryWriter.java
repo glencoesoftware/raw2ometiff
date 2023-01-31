@@ -707,6 +707,7 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
         for (int index=0; index<pixels.sizeOfChannelList(); index++) {
           Channel channel = pixels.getChannel(index);
           channel.setSamplesPerPixel(new PositiveInteger(rgbChannels));
+          channel.setColor(null);
         }
 
         // RGB data needs to have XYC* dimension order
