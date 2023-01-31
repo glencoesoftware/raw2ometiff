@@ -40,6 +40,8 @@ import loci.formats.tiff.TiffParser;
 import picocli.CommandLine;
 import picocli.CommandLine.ExecutionException;
 
+import ome.xml.model.primitives.Color;
+
 import org.apache.commons.lang3.SystemUtils;
 import org.junit.Assert;
 import org.junit.Assume;
@@ -421,6 +423,20 @@ public class ConversionTest {
     assertBioFormats2Raw();
     assertTool("--rgb");
     iteratePixels();
+    try (ImageReader reader = new ImageReader()) {
+      ServiceFactory sf = new ServiceFactory();
+      OMEXMLService xmlService = sf.getInstance(OMEXMLService.class);
+      OMEXMLMetadata metadata = xmlService.createOMEXMLMetadata();
+      reader.setMetadataStore(metadata);
+      reader.setFlattenedResolutions(false);
+      reader.setId(outputOmeTiff.toString());
+      Assert.assertEquals(
+          3, metadata.getPixelsSizeC(0).getNumberValue());
+      Assert.assertEquals(1, metadata.getChannelCount(0));
+      Assert.assertEquals(
+          3, metadata.getChannelSamplesPerPixel(0, 0).getNumberValue());
+      Assert.assertNull(metadata.getChannelColor(0, 0));
+    }
   }
 
   /**
@@ -432,6 +448,57 @@ public class ConversionTest {
     assertBioFormats2Raw();
     assertTool("--rgb");
     iteratePixels();
+    try (ImageReader reader = new ImageReader()) {
+      ServiceFactory sf = new ServiceFactory();
+      OMEXMLService xmlService = sf.getInstance(OMEXMLService.class);
+      OMEXMLMetadata metadata = xmlService.createOMEXMLMetadata();
+      reader.setMetadataStore(metadata);
+      reader.setFlattenedResolutions(false);
+      reader.setId(outputOmeTiff.toString());
+      Assert.assertEquals(
+          12, metadata.getPixelsSizeC(0).getNumberValue());
+      Assert.assertEquals(4, metadata.getChannelCount(0));
+      Assert.assertEquals(
+          3, metadata.getChannelSamplesPerPixel(0, 0).getNumberValue());
+      Assert.assertNull(metadata.getChannelColor(0, 0));
+      Assert.assertEquals(
+        3, metadata.getChannelSamplesPerPixel(0, 1).getNumberValue());
+      Assert.assertNull(metadata.getChannelColor(0, 1));
+      Assert.assertEquals(
+        3, metadata.getChannelSamplesPerPixel(0, 2).getNumberValue());
+      Assert.assertNull(metadata.getChannelColor(0, 2));
+      Assert.assertEquals(
+        3, metadata.getChannelSamplesPerPixel(0, 3).getNumberValue());
+      Assert.assertNull(metadata.getChannelColor(0, 3));
+    }
+  }
+
+  /**
+   * Test RGB with multiple channels.
+   */
+  @Test
+  public void testRGBChannelColor() throws Exception {
+    input = fake("sizeC", "3", "rgb", "3", "color_0", "16711935");
+    assertBioFormats2Raw();
+    assertTool("--rgb");
+    iteratePixels();
+    try (ImageReader reader = new ImageReader()) {
+      ServiceFactory sf = new ServiceFactory();
+      OMEXMLService xmlService = sf.getInstance(OMEXMLService.class);
+      OMEXMLMetadata metadata = xmlService.createOMEXMLMetadata();
+      reader.setMetadataStore(metadata);
+      reader.setFlattenedResolutions(false);
+      reader.setId(outputOmeTiff.toString());
+      Assert.assertEquals(
+          3, metadata.getPixelsSizeC(0).getNumberValue());
+      Assert.assertEquals(1, metadata.getChannelCount(0));
+      Assert.assertEquals(
+          3, metadata.getChannelSamplesPerPixel(0, 0).getNumberValue());
+      Color color =  metadata.getChannelColor(0, 0);
+      Assert.assertEquals(0, color.getRed());
+      Assert.assertEquals(255, color.getGreen());
+      Assert.assertEquals(0, color.getBlue());
+    }
   }
 
   /**
