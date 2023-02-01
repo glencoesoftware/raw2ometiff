@@ -55,6 +55,7 @@ import ome.units.UNITS;
 import ome.units.quantity.Length;
 import ome.xml.meta.OMEXMLMetadataRoot;
 import ome.xml.model.Channel;
+import ome.xml.model.FilterSet;
 import ome.xml.model.Pixels;
 import ome.xml.model.enums.DimensionOrder;
 import ome.xml.model.enums.EnumerationException;
@@ -707,7 +708,35 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
         for (int index=0; index<pixels.sizeOfChannelList(); index++) {
           Channel channel = pixels.getChannel(index);
           channel.setSamplesPerPixel(new PositiveInteger(rgbChannels));
-          channel.setColor(null);
+          if (channel.getColor() != null) {
+            LOG.warn("Removing channel color");
+            channel.setColor(null);
+          }
+          if (channel.getEmissionWavelength() != null) {
+            LOG.warn("Removing channel emission wavelength");
+            channel.setEmissionWavelength(null);
+          }
+          if (channel.getExcitationWavelength() != null) {
+            LOG.warn("Removing channel excitation wavelength");
+            channel.setEmissionWavelength(null);
+          }
+          if (channel.getLightPath() != null) {
+            LOG.warn("Removing channel light path");
+            channel.setLightPath(null);
+          }
+          if (channel.getLightSourceSettings() != null) {
+            LOG.warn("Removing channel light source settings");
+            channel.setLightSourceSettings(null);
+          }
+          FilterSet filterSet = channel.getLinkedFilterSet();
+          if (filterSet != null) {
+            LOG.warn("Removing channel filter set");
+            channel.unlinkFilterSet(filterSet);
+          }
+          if (channel.getName() != null) {
+            LOG.warn("Removing channel name");
+            channel.setName(null);
+          }
         }
 
         // RGB data needs to have XYC* dimension order
