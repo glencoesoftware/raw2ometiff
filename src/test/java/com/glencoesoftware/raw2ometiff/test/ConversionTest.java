@@ -434,6 +434,9 @@ public class ConversionTest {
       Assert.assertEquals(
           3, metadata.getChannelSamplesPerPixel(0, 0).getNumberValue());
       Assert.assertNull(metadata.getChannelColor(0, 0));
+      Assert.assertNull(metadata.getChannelEmissionWavelength(0, 0));
+      Assert.assertNull(metadata.getChannelExcitationWavelength(0, 0));
+      Assert.assertNull(metadata.getChannelName(0, 0));
     }
   }
 
@@ -459,24 +462,45 @@ public class ConversionTest {
       Assert.assertEquals(
           3, metadata.getChannelSamplesPerPixel(0, 0).getNumberValue());
       Assert.assertNull(metadata.getChannelColor(0, 0));
+      Assert.assertNull(metadata.getChannelEmissionWavelength(0, 0));
+      Assert.assertNull(metadata.getChannelExcitationWavelength(0, 0));
+      Assert.assertNull(metadata.getChannelName(0, 0));
       Assert.assertEquals(
         3, metadata.getChannelSamplesPerPixel(0, 1).getNumberValue());
       Assert.assertNull(metadata.getChannelColor(0, 1));
+      Assert.assertNull(metadata.getChannelEmissionWavelength(0, 1));
+      Assert.assertNull(metadata.getChannelExcitationWavelength(0, 1));
+      Assert.assertNull(metadata.getChannelName(0, 1));
       Assert.assertEquals(
         3, metadata.getChannelSamplesPerPixel(0, 2).getNumberValue());
       Assert.assertNull(metadata.getChannelColor(0, 2));
+      Assert.assertNull(metadata.getChannelEmissionWavelength(0, 2));
+      Assert.assertNull(metadata.getChannelExcitationWavelength(0, 2));
+      Assert.assertNull(metadata.getChannelName(0, 2));
       Assert.assertEquals(
         3, metadata.getChannelSamplesPerPixel(0, 3).getNumberValue());
       Assert.assertNull(metadata.getChannelColor(0, 3));
+      Assert.assertNull(metadata.getChannelEmissionWavelength(0, 3));
+      Assert.assertNull(metadata.getChannelExcitationWavelength(0, 3));
+      Assert.assertNull(metadata.getChannelName(0, 3));
     }
   }
 
   /**
-   * Test RGB with multiple channels.
+   * Test RGB with channel metadata.
    */
   @Test
-  public void testRGBChannelColor() throws Exception {
-    input = fake("sizeC", "3", "rgb", "3", "color_0", "16711935");
+  public void testRGBChannelMetadata() throws Exception {
+    Map<String, String> options = new HashMap<String, String>();
+    options.put("sizeC", "3");
+    options.put("rgb", "3");
+    options.put("color_0", "16711935");
+    Map<Integer, Map<String, String>> series =
+        new HashMap<Integer, Map<String, String>>();
+    Map<String, String> series0 = new HashMap<String, String>();
+    series0.put("ChannelName_0", "FITC");
+    series.put(0, series0);
+    input = fake(options, series);
     assertBioFormats2Raw();
     assertTool("--rgb");
     iteratePixels();
@@ -493,6 +517,9 @@ public class ConversionTest {
       Assert.assertEquals(
           3, metadata.getChannelSamplesPerPixel(0, 0).getNumberValue());
       Assert.assertNull(metadata.getChannelColor(0, 0));
+      Assert.assertNull(metadata.getChannelEmissionWavelength(0, 0));
+      Assert.assertNull(metadata.getChannelExcitationWavelength(0, 0));
+      Assert.assertNull(metadata.getChannelName(0, 0));
     }
   }
 
