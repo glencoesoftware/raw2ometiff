@@ -498,6 +498,25 @@ public class ConversionTest {
   }
 
   /**
+   * Test RGB with multiple channels using API instead of command line.
+   */
+  @Test
+  public void testOptionsAPI() throws Exception {
+    input = fake("sizeC", "12", "rgb", "3");
+    assertBioFormats2Raw();
+
+    outputOmeTiff = output.resolve("output.ome.tiff");
+    PyramidFromDirectoryWriter apiConverter = new PyramidFromDirectoryWriter();
+    apiConverter.setInputPath(output);
+    apiConverter.setOutputPath(outputOmeTiff);
+    apiConverter.setCompression("raw");
+    apiConverter.setRGB(true);
+    apiConverter.call();
+
+    iteratePixels();
+  }
+
+  /**
    * Test "--version" with no other arguments.
    * Does not test the version values, just makes sure that an exception
    * is not thrown.
