@@ -13,7 +13,6 @@ sourceCompatibility = 1.8
 targetCompatibility = 1.8
 
 repositories {
-    jcenter()
     mavenCentral()
     maven {
         url 'https://artifacts.glencoesoftware.com/artifactory/ome.releases/'
