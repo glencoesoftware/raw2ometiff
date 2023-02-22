@@ -245,6 +245,9 @@ public class ConversionTest {
         inputReader.setSeries(series);
         outputReader.setSeries(series);
 
+        Assert.assertEquals(
+          inputReader.getImageCount(), outputReader.getImageCount());
+        Assert.assertEquals(inputReader.getSizeC(), outputReader.getSizeC());
         for (int plane=0; plane<inputReader.getImageCount(); plane++) {
           Object inputPlane = getPlane(inputReader, plane);
           Object outputPlane = getPlane(outputReader, plane);
@@ -279,7 +282,10 @@ public class ConversionTest {
 
   private void assertDefaults() throws Exception {
     ZarrArray series0 = ZarrGroup.open(output.resolve("0")).openArray("0");
-    Assert.assertTrue(series0.getNested());
+    // no getter for DimensionSeparator in ZarrArray
+    // check that the correct separator was used by checking
+    // that the expected first chunk file exists
+    Assert.assertTrue(output.resolve("0/0/0/0/0/0/0").toFile().exists());
     // Also ensure we're using the latest .zarray metadata
     ObjectMapper objectMapper = new ObjectMapper();
     JsonNode root = objectMapper.readTree(
@@ -414,8 +420,19 @@ public class ConversionTest {
   public void testOddTileSize() throws Exception {
     input = fake("pixelType", "uint16");
     assertBioFormats2Raw("-w", "17", "-h", "19");
-    assertTool();
+    assertTool("--compression", "raw");
     iteratePixels();
+
+    try (TiffParser parser = new TiffParser(outputOmeTiff.toString())) {
+      IFDList mainIFDs = parser.getMainIFDs();
+      Assert.assertEquals(1, mainIFDs.size());
+      int tileSize = 32 * 32 * 2;
+      long[] tileByteCounts = mainIFDs.get(0).getStripByteCounts();
+      Assert.assertEquals(256, tileByteCounts.length);
+      for (long count : tileByteCounts) {
+        Assert.assertEquals(tileSize, count);
+      }
+    }
   }
 
   /**
@@ -427,6 +444,117 @@ public class ConversionTest {
     assertBioFormats2Raw("-w", "128", "-h", "128");
     assertTool();
     iteratePixels();
+  }
+
+  /**
+   * Test RGB with multiple timepoints.
+   */
+  @Test
+  public void testRGBMultiT() throws Exception {
+    input = fake("sizeC", "3", "sizeT", "5", "rgb", "3");
+    assertBioFormats2Raw();
+    assertTool("--rgb");
+    iteratePixels();
+    try (ImageReader reader = new ImageReader()) {
+      ServiceFactory sf = new ServiceFactory();
+      OMEXMLService xmlService = sf.getInstance(OMEXMLService.class);
+      OMEXMLMetadata metadata = xmlService.createOMEXMLMetadata();
+      reader.setMetadataStore(metadata);
+      reader.setFlattenedResolutions(false);
+      reader.setId(outputOmeTiff.toString());
+      Assert.assertEquals(
+          3, metadata.getPixelsSizeC(0).getNumberValue());
+      Assert.assertEquals(1, metadata.getChannelCount(0));
+      Assert.assertEquals(
+          3, metadata.getChannelSamplesPerPixel(0, 0).getNumberValue());
+      Assert.assertNull(metadata.getChannelColor(0, 0));
+      Assert.assertNull(metadata.getChannelEmissionWavelength(0, 0));
+      Assert.assertNull(metadata.getChannelExcitationWavelength(0, 0));
+      Assert.assertNull(metadata.getChannelName(0, 0));
+    }
+  }
+
+  /**
+   * Test RGB with multiple channels.
+   */
+  @Test
+  public void testRGBMultiC() throws Exception {
+    input = fake("sizeC", "12", "rgb", "3");
+    assertBioFormats2Raw();
+    assertTool("--rgb");
+    iteratePixels();
+    try (ImageReader reader = new ImageReader()) {
+      ServiceFactory sf = new ServiceFactory();
+      OMEXMLService xmlService = sf.getInstance(OMEXMLService.class);
+      OMEXMLMetadata metadata = xmlService.createOMEXMLMetadata();
+      reader.setMetadataStore(metadata);
+      reader.setFlattenedResolutions(false);
+      reader.setId(outputOmeTiff.toString());
+      Assert.assertEquals(
+          12, metadata.getPixelsSizeC(0).getNumberValue());
+      Assert.assertEquals(4, metadata.getChannelCount(0));
+      Assert.assertEquals(
+          3, metadata.getChannelSamplesPerPixel(0, 0).getNumberValue());
+      Assert.assertNull(metadata.getChannelColor(0, 0));
+      Assert.assertNull(metadata.getChannelEmissionWavelength(0, 0));
+      Assert.assertNull(metadata.getChannelExcitationWavelength(0, 0));
+      Assert.assertNull(metadata.getChannelName(0, 0));
+      Assert.assertEquals(
+        3, metadata.getChannelSamplesPerPixel(0, 1).getNumberValue());
+      Assert.assertNull(metadata.getChannelColor(0, 1));
+      Assert.assertNull(metadata.getChannelEmissionWavelength(0, 1));
+      Assert.assertNull(metadata.getChannelExcitationWavelength(0, 1));
+      Assert.assertNull(metadata.getChannelName(0, 1));
+      Assert.assertEquals(
+        3, metadata.getChannelSamplesPerPixel(0, 2).getNumberValue());
+      Assert.assertNull(metadata.getChannelColor(0, 2));
+      Assert.assertNull(metadata.getChannelEmissionWavelength(0, 2));
+      Assert.assertNull(metadata.getChannelExcitationWavelength(0, 2));
+      Assert.assertNull(metadata.getChannelName(0, 2));
+      Assert.assertEquals(
+        3, metadata.getChannelSamplesPerPixel(0, 3).getNumberValue());
+      Assert.assertNull(metadata.getChannelColor(0, 3));
+      Assert.assertNull(metadata.getChannelEmissionWavelength(0, 3));
+      Assert.assertNull(metadata.getChannelExcitationWavelength(0, 3));
+      Assert.assertNull(metadata.getChannelName(0, 3));
+    }
+  }
+
+  /**
+   * Test RGB with channel metadata.
+   */
+  @Test
+  public void testRGBChannelMetadata() throws Exception {
+    Map<String, String> options = new HashMap<String, String>();
+    options.put("sizeC", "3");
+    options.put("rgb", "3");
+    options.put("color_0", "16711935");
+    Map<Integer, Map<String, String>> series =
+        new HashMap<Integer, Map<String, String>>();
+    Map<String, String> series0 = new HashMap<String, String>();
+    series0.put("ChannelName_0", "FITC");
+    series.put(0, series0);
+    input = fake(options, series);
+    assertBioFormats2Raw();
+    assertTool("--rgb");
+    iteratePixels();
+    try (ImageReader reader = new ImageReader()) {
+      ServiceFactory sf = new ServiceFactory();
+      OMEXMLService xmlService = sf.getInstance(OMEXMLService.class);
+      OMEXMLMetadata metadata = xmlService.createOMEXMLMetadata();
+      reader.setMetadataStore(metadata);
+      reader.setFlattenedResolutions(false);
+      reader.setId(outputOmeTiff.toString());
+      Assert.assertEquals(
+          3, metadata.getPixelsSizeC(0).getNumberValue());
+      Assert.assertEquals(1, metadata.getChannelCount(0));
+      Assert.assertEquals(
+          3, metadata.getChannelSamplesPerPixel(0, 0).getNumberValue());
+      Assert.assertNull(metadata.getChannelColor(0, 0));
+      Assert.assertNull(metadata.getChannelEmissionWavelength(0, 0));
+      Assert.assertNull(metadata.getChannelExcitationWavelength(0, 0));
+      Assert.assertNull(metadata.getChannelName(0, 0));
+    }
   }
 
   /**

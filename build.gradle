@@ -6,23 +6,25 @@ plugins {
 }
 
 group = 'com.glencoesoftware'
-version = '0.3.1-SNAPSHOT'
+version = '0.5.0-SNAPSHOT'
 
 mainClassName = 'com.glencoesoftware.pyramid.PyramidFromDirectoryWriter'
 sourceCompatibility = 1.8
 targetCompatibility = 1.8
 
 repositories {
-    jcenter()
     mavenCentral()
     maven {
         url 'https://artifacts.glencoesoftware.com/artifactory/ome.releases/'
     }
     maven {
+        url 'https://artifacts.glencoesoftware.com/artifactory/unidata-releases/'
+    }
+    maven {
         url 'https://repo.glencoesoftware.com/repository/bioformats2raw2ometiff/'
     }
     maven {
-        url 'http://nexus.senbox.net/nexus/content/groups/public'
+        url 'https://nexus.senbox.net/nexus/content/groups/public'
     }
     maven {
         url 'https://repo.glencoesoftware.com/repository/jzarr-snapshots'
@@ -34,15 +36,17 @@ repositories {
 
 dependencies {
     implementation 'net.java.dev.jna:jna:5.10.0'
-    implementation 'com.bc.zarr:jzarr:0.3.3-gs-SNAPSHOT'
+    implementation 'com.bc.zarr:jzarr:0.3.5'
     implementation 'info.picocli:picocli:4.2.0'
     implementation 'me.tongfei:progressbar:0.9.0'
-    implementation 'ome:formats-bsd:6.4.0'
+    implementation 'ome:formats-bsd:6.12.0'
     // be careful here, this is a newer version of org.json:json than formats-gpl uses
     implementation 'org.json:json:20190722'
+    implementation group: 'ch.qos.logback', name: 'logback-classic', version: '1.3.4'
+    implementation group: 'ch.qos.logback', name: 'logback-core', version: '1.3.4'
     testImplementation 'junit:junit:4.12'
     testImplementation 'org.apache.commons:commons-lang3:3.12.0'
-    testImplementation 'com.glencoesoftware:bioformats2raw:0.3.0'
+    testImplementation 'com.glencoesoftware:bioformats2raw:0.5.0'
 }
 
 test {
@@ -53,7 +57,7 @@ jar {
     manifest {
         attributes(
             "Main-Class": mainClassName,
-            "Implementation-Version": version
+            "Implementation-Version": archiveVersion
         )
     }
 }
@@ -67,6 +71,18 @@ distributions {
             }
         }
     }
+}
+
+startScripts {
+  // placing logback.xml somewhere under src/dist/lib/ keeps it out of
+  // raw2ometiff-*.jar but automatically includes it in the distribution zip
+  // the directory containing logback.xml must be explicitly added to the
+  // startup scripts' classpath, otherwise it will not be detected
+
+  // a subdirectory of 'src/dist/lib/' (not just 'src/dist/') is necessary,
+  // likely due to https://issues.gradle.org/browse/GRADLE-2991
+  // see also discussion in https://github.com/glencoesoftware/bioformats2raw/pull/169
+  classpath += files('src/dist/lib/config/')
 }
 
 publishing {
