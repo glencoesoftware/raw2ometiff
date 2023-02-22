@@ -421,6 +421,23 @@ public class ConversionTest {
     assertBioFormats2Raw();
     assertTool("--rgb");
     iteratePixels();
+    try (ImageReader reader = new ImageReader()) {
+      ServiceFactory sf = new ServiceFactory();
+      OMEXMLService xmlService = sf.getInstance(OMEXMLService.class);
+      OMEXMLMetadata metadata = xmlService.createOMEXMLMetadata();
+      reader.setMetadataStore(metadata);
+      reader.setFlattenedResolutions(false);
+      reader.setId(outputOmeTiff.toString());
+      Assert.assertEquals(
+          3, metadata.getPixelsSizeC(0).getNumberValue());
+      Assert.assertEquals(1, metadata.getChannelCount(0));
+      Assert.assertEquals(
+          3, metadata.getChannelSamplesPerPixel(0, 0).getNumberValue());
+      Assert.assertNull(metadata.getChannelColor(0, 0));
+      Assert.assertNull(metadata.getChannelEmissionWavelength(0, 0));
+      Assert.assertNull(metadata.getChannelExcitationWavelength(0, 0));
+      Assert.assertNull(metadata.getChannelName(0, 0));
+    }
   }
 
   /**
@@ -432,6 +449,78 @@ public class ConversionTest {
     assertBioFormats2Raw();
     assertTool("--rgb");
     iteratePixels();
+    try (ImageReader reader = new ImageReader()) {
+      ServiceFactory sf = new ServiceFactory();
+      OMEXMLService xmlService = sf.getInstance(OMEXMLService.class);
+      OMEXMLMetadata metadata = xmlService.createOMEXMLMetadata();
+      reader.setMetadataStore(metadata);
+      reader.setFlattenedResolutions(false);
+      reader.setId(outputOmeTiff.toString());
+      Assert.assertEquals(
+          12, metadata.getPixelsSizeC(0).getNumberValue());
+      Assert.assertEquals(4, metadata.getChannelCount(0));
+      Assert.assertEquals(
+          3, metadata.getChannelSamplesPerPixel(0, 0).getNumberValue());
+      Assert.assertNull(metadata.getChannelColor(0, 0));
+      Assert.assertNull(metadata.getChannelEmissionWavelength(0, 0));
+      Assert.assertNull(metadata.getChannelExcitationWavelength(0, 0));
+      Assert.assertNull(metadata.getChannelName(0, 0));
+      Assert.assertEquals(
+        3, metadata.getChannelSamplesPerPixel(0, 1).getNumberValue());
+      Assert.assertNull(metadata.getChannelColor(0, 1));
+      Assert.assertNull(metadata.getChannelEmissionWavelength(0, 1));
+      Assert.assertNull(metadata.getChannelExcitationWavelength(0, 1));
+      Assert.assertNull(metadata.getChannelName(0, 1));
+      Assert.assertEquals(
+        3, metadata.getChannelSamplesPerPixel(0, 2).getNumberValue());
+      Assert.assertNull(metadata.getChannelColor(0, 2));
+      Assert.assertNull(metadata.getChannelEmissionWavelength(0, 2));
+      Assert.assertNull(metadata.getChannelExcitationWavelength(0, 2));
+      Assert.assertNull(metadata.getChannelName(0, 2));
+      Assert.assertEquals(
+        3, metadata.getChannelSamplesPerPixel(0, 3).getNumberValue());
+      Assert.assertNull(metadata.getChannelColor(0, 3));
+      Assert.assertNull(metadata.getChannelEmissionWavelength(0, 3));
+      Assert.assertNull(metadata.getChannelExcitationWavelength(0, 3));
+      Assert.assertNull(metadata.getChannelName(0, 3));
+    }
+  }
+
+  /**
+   * Test RGB with channel metadata.
+   */
+  @Test
+  public void testRGBChannelMetadata() throws Exception {
+    Map<String, String> options = new HashMap<String, String>();
+    options.put("sizeC", "3");
+    options.put("rgb", "3");
+    options.put("color_0", "16711935");
+    Map<Integer, Map<String, String>> series =
+        new HashMap<Integer, Map<String, String>>();
+    Map<String, String> series0 = new HashMap<String, String>();
+    series0.put("ChannelName_0", "FITC");
+    series.put(0, series0);
+    input = fake(options, series);
+    assertBioFormats2Raw();
+    assertTool("--rgb");
+    iteratePixels();
+    try (ImageReader reader = new ImageReader()) {
+      ServiceFactory sf = new ServiceFactory();
+      OMEXMLService xmlService = sf.getInstance(OMEXMLService.class);
+      OMEXMLMetadata metadata = xmlService.createOMEXMLMetadata();
+      reader.setMetadataStore(metadata);
+      reader.setFlattenedResolutions(false);
+      reader.setId(outputOmeTiff.toString());
+      Assert.assertEquals(
+          3, metadata.getPixelsSizeC(0).getNumberValue());
+      Assert.assertEquals(1, metadata.getChannelCount(0));
+      Assert.assertEquals(
+          3, metadata.getChannelSamplesPerPixel(0, 0).getNumberValue());
+      Assert.assertNull(metadata.getChannelColor(0, 0));
+      Assert.assertNull(metadata.getChannelEmissionWavelength(0, 0));
+      Assert.assertNull(metadata.getChannelExcitationWavelength(0, 0));
+      Assert.assertNull(metadata.getChannelName(0, 0));
+    }
   }
 
   /**
