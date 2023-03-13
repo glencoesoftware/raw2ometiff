@@ -34,6 +34,7 @@ import me.tongfei.progressbar.ProgressBarBuilder;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import loci.common.Constants;
 import loci.common.DataTools;
 import loci.common.RandomAccessOutputStream;
 import loci.common.Region;
@@ -207,6 +208,10 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
   OMEPyramidStore metadata;
 
   private Map<String, Object> plateData = null;
+
+  // path to companion OME-XML file
+  // only used with the --split option
+  private String companionPath = null;
 
   /**
    * Construct a writer for performing the pyramid conversion.
@@ -809,16 +814,7 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
       totalPlanes += s.planeCount;
 
       if (splitBySeries) {
-        // remove [.ome].tif[f] suffix, if present
-        String basePath = outputFilePath.toString();
-        if (basePath.toLowerCase().endsWith(".tif") ||
-          basePath.toLowerCase().endsWith(".tiff"))
-        {
-          basePath = basePath.substring(0, basePath.lastIndexOf("."));
-          if (basePath.toLowerCase().endsWith(".ome")) {
-            basePath = basePath.substring(0, basePath.lastIndexOf("."));
-          }
-        }
+        String basePath = getOutputPathPrefix();
         // append the series index and file extension
         basePath += "_s";
         seriesPaths.add(Paths.get(basePath + s.index + ".ome.tiff"));
@@ -833,9 +829,47 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
     populateTiffData();
     populateOriginalMetadata(service);
 
+    if (splitBySeries) {
+      // splitting into separate OME-TIFFs results in a companion OME-XML file
+      // the OME-TIFFs then use the BinaryOnly element to reference the OME-XML
+      // for large plates in particular, this is useful as it reduces the
+      // OME-TIFF file size
+
+      companionPath = getOutputPathPrefix() + ".companion.ome";
+      uuids.put(companionPath, "urn:uuid:" + UUID.randomUUID().toString());
+
+      try {
+        metadata.setUUID(uuids.get(companionPath));
+        String omexml = service.getOMEXML(metadata);
+        Files.write(Paths.get(companionPath),
+          omexml.getBytes(Constants.ENCODING));
+      }
+      catch (ServiceException e) {
+        throw new FormatException("Could not get OME-XML", e);
+      }
+    }
+
     for (Path p : seriesPaths) {
       writeTIFFHeader(p.toString());
     }
+  }
+
+  /**
+   * Remove the [.ome].tif[f] suffix from the output file path, if present.
+   *
+   * @return output file path without OME-TIFF extension
+   */
+  private String getOutputPathPrefix() {
+    String basePath = outputFilePath.toString();
+    if (basePath.toLowerCase().endsWith(".tif") ||
+      basePath.toLowerCase().endsWith(".tiff"))
+    {
+      basePath = basePath.substring(0, basePath.lastIndexOf("."));
+      if (basePath.toLowerCase().endsWith(".ome")) {
+        basePath = basePath.substring(0, basePath.lastIndexOf("."));
+      }
+    }
+    return basePath;
   }
 
   private void writeTIFFHeader(String output) throws IOException {
@@ -1180,15 +1214,25 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
     }
 
     // only write the OME-XML to the first full-resolution IFD
-    if ((s.index == 0 || splitBySeries) && resolution == 0 && plane == 0) {
-      try {
-        metadata.setUUID(uuids.get(getSeriesPathName(s)));
-        OMEXMLService service = getService();
-        String omexml = service.getOMEXML(metadata);
+    if (resolution == 0 && plane == 0) {
+      if (splitBySeries) {
+        // if each series is in a separate OME-TIFF, store BinaryOnly OME-XML
+        // that references the companion OME-XML file
+
+        String omexml = getBinaryOnlyOMEXML(getSeriesPathName(s));
         ifd.put(IFD.IMAGE_DESCRIPTION, omexml);
       }
-      catch (ServiceException e) {
-        throw new FormatException("Could not get OME-XML", e);
+      else if (s.index == 0) {
+        // if everything is in one OME-TIFF file, store the complete OME-XML
+        try {
+          metadata.setUUID(uuids.get(getSeriesPathName(s)));
+          OMEXMLService service = getService();
+          String omexml = service.getOMEXML(metadata);
+          ifd.put(IFD.IMAGE_DESCRIPTION, omexml);
+        }
+        catch (ServiceException e) {
+          throw new FormatException("Could not get OME-XML", e);
+        }
       }
     }
 
@@ -1370,6 +1414,33 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
         metadata.setTiffDataIFD(new NonNegativeInteger(0), s.index, 0);
       }
     }
+  }
+
+  /**
+   * Get a BinaryOnly OME-XML string for the given OME-TIFF path.
+   * When datasets are split across multiple OME-TIFF files,
+   * a companion OME-XML file is used which requires each OME-TIFF
+   * to have BinaryOnly OME-XML that references the companion OME-XML file.
+   *
+   * @param ometiff path to OME-TIFF (for UUID retrieval)
+   * @return corresponding BinaryOnly OME-XML string
+   */
+  private String getBinaryOnlyOMEXML(String ometiff) {
+    try {
+      OMEXMLService service = getService();
+      OMEPyramidStore binaryOnly =
+        (OMEPyramidStore) service.createOMEXMLMetadata();
+      binaryOnly.setUUID(uuids.get(ometiff));
+      Path companion = Paths.get(companionPath);
+      binaryOnly.setBinaryOnlyMetadataFile(
+        companion.getName(companion.getNameCount() - 1).toString());
+      binaryOnly.setBinaryOnlyUUID(uuids.get(companionPath));
+      return service.getOMEXML(binaryOnly);
+    }
+    catch (DependencyException | ServiceException e) {
+      LOG.warn("Could not create OME-XML for " + ometiff, e);
+    }
+    return null;
   }
 
   /**

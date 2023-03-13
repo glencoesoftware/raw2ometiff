@@ -636,8 +636,12 @@ public class ConversionTest {
       OMEXMLMetadata metadata = xmlService.createOMEXMLMetadata();
       reader.setMetadataStore(metadata);
       reader.setFlattenedResolutions(false);
-      reader.setId(output.resolve("output").toString() + "_s0.ome.tiff");
 
+      // --split should always produce a companion OME-XML file
+      // with BinaryOnly OME-TIFFs
+      reader.setId(output.resolve("output").toString() + ".companion.ome");
+
+      Assert.assertEquals(reader.getUsedFiles().length, 25);
       Assert.assertEquals(reader.getSeriesCount(), 24);
       Assert.assertEquals(1, metadata.getPlateCount());
       Assert.assertEquals(24, metadata.getImageCount());
