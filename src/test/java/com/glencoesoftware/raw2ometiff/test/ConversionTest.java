@@ -507,8 +507,8 @@ public class ConversionTest {
 
     outputOmeTiff = output.resolve("output.ome.tiff");
     PyramidFromDirectoryWriter apiConverter = new PyramidFromDirectoryWriter();
-    apiConverter.setInputPath(output);
-    apiConverter.setOutputPath(outputOmeTiff);
+    apiConverter.setInputPath(output.toString());
+    apiConverter.setOutputPath(outputOmeTiff.toString());
     apiConverter.setCompression("raw");
     apiConverter.setRGB(true);
     apiConverter.call();

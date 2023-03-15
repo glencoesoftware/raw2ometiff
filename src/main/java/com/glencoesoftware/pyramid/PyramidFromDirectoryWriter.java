@@ -11,6 +11,7 @@ import java.io.IOException;
 import java.nio.ByteOrder;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
@@ -152,8 +153,9 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
       arity = "1",
       description = "Relative path to the output OME-TIFF file"
   )
-  public void setOutputPath(Path output) {
-    outputFilePath = output;
+  public void setOutputPath(String output) {
+    // could be expanded to allow other output locations
+    outputFilePath = Paths.get(output);
   }
 
   /**
@@ -166,8 +168,9 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
       arity = "1",
       description = "Directory containing pixel data to convert"
   )
-  public void setInputPath(Path input) {
-    inputDirectory = input;
+  public void setInputPath(String input) {
+    // could be expanded to allow other input locations
+    inputDirectory = Paths.get(input);
   }
 
   /**
@@ -305,15 +308,15 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
   /**
    * @return path to output data
    */
-  public Path getOutputPath() {
-    return outputFilePath;
+  public String getOutputPath() {
+    return outputFilePath.toString();
   }
 
   /**
    * @return path to input data
    */
-  public Path getInputPath() {
-    return inputDirectory;
+  public String getInputPath() {
+    return inputDirectory.toString();
   }
 
   /**
