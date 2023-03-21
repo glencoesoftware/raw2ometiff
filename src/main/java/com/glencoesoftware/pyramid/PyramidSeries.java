@@ -27,6 +27,8 @@ public class PyramidSeries {
   /** Path to series. */
   String path;
 
+  String uuid;
+
   int index = -1;
 
   IFDList[] ifds;

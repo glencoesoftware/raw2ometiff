@@ -113,8 +113,7 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
     LoggerFactory.getLogger(PyramidFromDirectoryWriter.class);
 
   /** Path to each output file. */
-  private List<Path> seriesPaths = new ArrayList<Path>();
-  private Map<String, String> uuids = new HashMap<String, String>();
+  private List<Path> seriesPaths;
 
   private BlockingQueue<Runnable> tileQueue;
   private ExecutorService executor;
@@ -206,12 +205,14 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
 
   /** Writer metadata. */
   OMEPyramidStore metadata;
+  OMEPyramidStore binaryOnly;
 
   private Map<String, Object> plateData = null;
 
-  // path to companion OME-XML file
+  // path and UUID for companion OME-XML file
   // only used with the --split option
   private String companionPath = null;
+  private String companionUUID = null;
 
   /**
    * Construct a writer for performing the pyramid conversion.
@@ -668,6 +669,7 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
     }
 
     int totalPlanes = 0;
+    seriesPaths = new ArrayList<Path>(seriesCount);
     for (int seriesIndex=0; seriesIndex<seriesCount; seriesIndex++) {
       PyramidSeries s = new PyramidSeries();
       s.index = seriesIndex;
@@ -818,12 +820,19 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
         // append the series index and file extension
         basePath += "_s";
         seriesPaths.add(Paths.get(basePath + s.index + ".ome.tiff"));
+        // generate one UUID per file
+        s.uuid = "urn:uuid:" + UUID.randomUUID().toString();
       }
       else {
         seriesPaths.add(outputFilePath);
+        // use the same UUID everywhere since we're only writing one file
+        if (seriesIndex == 0) {
+          s.uuid = "urn:uuid:" + UUID.randomUUID().toString();
+        }
+        else {
+          s.uuid = series.get(0).uuid;
+        }
       }
-      uuids.put(seriesPaths.get(s.index).toString(),
-        "urn:uuid:" + UUID.randomUUID().toString());
     }
 
     populateTiffData();
@@ -836,10 +845,10 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
       // OME-TIFF file size
 
       companionPath = getOutputPathPrefix() + ".companion.ome";
-      uuids.put(companionPath, "urn:uuid:" + UUID.randomUUID().toString());
+      companionUUID = "urn:uuid:" + UUID.randomUUID().toString();
 
       try {
-        metadata.setUUID(uuids.get(companionPath));
+        metadata.setUUID(companionUUID);
         String omexml = service.getOMEXML(metadata);
         Files.write(Paths.get(companionPath),
           omexml.getBytes(Constants.ENCODING));
@@ -913,6 +922,7 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
       convertPyramid(s);
     }
     writeIFDs();
+    binaryOnly = null;
   }
 
   private void convertPyramid(PyramidSeries s)
@@ -1219,13 +1229,13 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
         // if each series is in a separate OME-TIFF, store BinaryOnly OME-XML
         // that references the companion OME-XML file
 
-        String omexml = getBinaryOnlyOMEXML(getSeriesPathName(s));
+        String omexml = getBinaryOnlyOMEXML(s);
         ifd.put(IFD.IMAGE_DESCRIPTION, omexml);
       }
       else if (s.index == 0) {
         // if everything is in one OME-TIFF file, store the complete OME-XML
         try {
-          metadata.setUUID(uuids.get(getSeriesPathName(s)));
+          metadata.setUUID(s.uuid);
           OMEXMLService service = getService();
           String omexml = service.getOMEXML(metadata);
           ifd.put(IFD.IMAGE_DESCRIPTION, omexml);
@@ -1409,7 +1419,7 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
     for (PyramidSeries s : series) {
       metadata.setUUIDFileName(
         Paths.get(getSeriesPathName(s)).getFileName().toString(), s.index, 0);
-      metadata.setUUIDValue(uuids.get(getSeriesPathName(s)), s.index, 0);
+      metadata.setUUIDValue(s.uuid, s.index, 0);
       if (splitBySeries) {
         metadata.setTiffDataIFD(new NonNegativeInteger(0), s.index, 0);
       }
@@ -1422,23 +1432,25 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
    * a companion OME-XML file is used which requires each OME-TIFF
    * to have BinaryOnly OME-XML that references the companion OME-XML file.
    *
-   * @param ometiff path to OME-TIFF (for UUID retrieval)
+   * @param s pyramid series for UUID retrieval
    * @return corresponding BinaryOnly OME-XML string
    */
-  private String getBinaryOnlyOMEXML(String ometiff) {
+  private String getBinaryOnlyOMEXML(PyramidSeries s) {
     try {
       OMEXMLService service = getService();
-      OMEPyramidStore binaryOnly =
-        (OMEPyramidStore) service.createOMEXMLMetadata();
-      binaryOnly.setUUID(uuids.get(ometiff));
-      Path companion = Paths.get(companionPath);
-      binaryOnly.setBinaryOnlyMetadataFile(
-        companion.getName(companion.getNameCount() - 1).toString());
-      binaryOnly.setBinaryOnlyUUID(uuids.get(companionPath));
+      if (binaryOnly == null) {
+        binaryOnly = (OMEPyramidStore) service.createOMEXMLMetadata();
+
+        Path companion = Paths.get(companionPath);
+        binaryOnly.setBinaryOnlyMetadataFile(
+          companion.getName(companion.getNameCount() - 1).toString());
+        binaryOnly.setBinaryOnlyUUID(companionUUID);
+      }
+      binaryOnly.setUUID(s.uuid);
       return service.getOMEXML(binaryOnly);
     }
     catch (DependencyException | ServiceException e) {
-      LOG.warn("Could not create OME-XML for " + ometiff, e);
+      LOG.warn("Could not create OME-XML for " + getSeriesPathName(s), e);
     }
     return null;
   }
