@@ -121,8 +121,8 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
   private volatile String logLevel = "WARN";
   private volatile boolean progressBars = false;
   boolean printVersion = false;
-  String compression = "LZW";
-  Double compressionQuality;
+  CompressionType compression = CompressionType.LZW;
+  CodecOptions compressionOptions;
   boolean legacy = false;
   int maxWorkers = Runtime.getRuntime().availableProcessors();
   boolean rgb = false;
@@ -223,23 +223,26 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
 
   /**
    * Set the compression type for the output OME-TIFF. Defaults to LZW.
-   * Valid types are defined in the CompressionTypes class.
+   * Valid types are defined in the CompressionType enum.
    *
    * @param compressionType compression type
    */
   @Option(
       names = "--compression",
-      completionCandidates = CompressionTypes.class,
       description = "Compression type for output OME-TIFF file " +
                     "(${COMPLETION-CANDIDATES}; default: ${DEFAULT-VALUE})",
+      converter = CompressionTypeConverter.class,
       defaultValue = "LZW"
   )
-  public void setCompression(String compressionType) {
+  public void setCompression(CompressionType compressionType) {
     compression = compressionType;
   }
 
   /**
-   * Set the compression quality. The interpretation of the quality value
+   * Set the compression options.
+   *
+   * When using the command line "--quality" option, the quality value will be
+   * wrapped in a CodecOptions. The interpretation of the quality value
    * depends upon the selected compression type.
    *
    * This value currently only applies to "JPEG-2000 Lossy" compression,
@@ -250,14 +253,20 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
    * This is equivalent to lossless compression; to see truly lossy compression,
    * the quality should be set to less than the bit depth of the input image.
    *
-   * @param quality compression quality
+   * Options other than quality may be specified in this object, but their
+   * interpretation will also depend upon the compression type selected.
+   * Options that conflict with the input data (e.g. bits per pixel)
+   * will be ignored.
+   *
+   * @param options compression options
    */
   @Option(
       names = "--quality",
+      converter = CompressionQualityConverter.class,
       description = "Compression quality"
   )
-  public void setCompressionQuality(Double quality) {
-    compressionQuality = quality;
+  public void setCompressionOptions(CodecOptions options) {
+    compressionOptions = options;
   }
 
   /**
@@ -343,15 +352,15 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
   /**
    * @return compression type
    */
-  public String getCompression() {
+  public CompressionType getCompression() {
     return compression;
   }
 
   /**
-   * @return compression quality
+   * @return compression options
    */
-  public Double getCompressionQuality() {
-    return compressionQuality;
+  public CodecOptions getCompressionOptions() {
+    return compressionOptions;
   }
 
   /**
@@ -1204,8 +1213,7 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
     ifd.put(IFD.IMAGE_LENGTH, (long) descriptor.sizeY);
     ifd.put(IFD.TILE_WIDTH, descriptor.tileSizeX);
     ifd.put(IFD.TILE_LENGTH, descriptor.tileSizeY);
-    ifd.put(IFD.COMPRESSION,
-      CompressionTypes.getTIFFCompression(compression).getCode());
+    ifd.put(IFD.COMPRESSION, compression.getTIFFCompression().getCode());
 
     ifd.put(IFD.PLANAR_CONFIGURATION, s.rgb ? 2 : 1);
 
@@ -1296,9 +1304,9 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
       s.index, imageNumber, tileIndex);
 
     IFD ifd = s.ifds[resolution].get(imageNumber);
-    TiffCompression tiffCompression =
-      CompressionTypes.getTIFFCompression(compression);
-    CodecOptions options = tiffCompression.getCompressionCodecOptions(ifd);
+    TiffCompression tiffCompression = compression.getTIFFCompression();
+    CodecOptions options =
+      tiffCompression.getCompressionCodecOptions(ifd, compressionOptions);
 
     // buffer has been padded to full tile width before calling writeTile
     // but is not necessarily full tile height (if in the bottom row)
@@ -1307,9 +1315,6 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
     options.height = buffer.length / (options.width * bpp);
     options.bitsPerSample = bpp * 8;
     options.channels = 1;
-    if (compressionQuality != null) {
-      options.quality = compressionQuality;
-    }
 
     byte[] realTile = tiffCompression.compress(buffer, options);
     LOG.debug("    writing {} compressed bytes at {}",

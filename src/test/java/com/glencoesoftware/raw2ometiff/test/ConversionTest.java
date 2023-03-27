@@ -25,6 +25,7 @@ import com.bc.zarr.ZarrGroup;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.glencoesoftware.bioformats2raw.Converter;
+import com.glencoesoftware.pyramid.CompressionType;
 import com.glencoesoftware.pyramid.PyramidFromDirectoryWriter;
 
 import loci.common.DataTools;
@@ -509,11 +510,28 @@ public class ConversionTest {
     PyramidFromDirectoryWriter apiConverter = new PyramidFromDirectoryWriter();
     apiConverter.setInputPath(output.toString());
     apiConverter.setOutputPath(outputOmeTiff.toString());
-    apiConverter.setCompression("raw");
+    apiConverter.setCompression(CompressionType.UNCOMPRESSED);
     apiConverter.setRGB(true);
     apiConverter.call();
 
     iteratePixels();
+  }
+
+  /**
+   * Test "--quality" command line option.
+   */
+  @Test
+  public void testCompressionQuality() throws Exception {
+    input = fake("sizeC", "3", "rgb", "3");
+    assertBioFormats2Raw();
+    assertTool("--compression", "JPEG-2000", "--quality", "0.25", "--rgb");
+
+    try (ImageReader reader = new ImageReader()) {
+      reader.setFlattenedResolutions(false);
+      reader.setId(outputOmeTiff.toString());
+      Assert.assertEquals(1, reader.getSeriesCount());
+      Assert.assertEquals(3, reader.getRGBChannelCount());
+    }
   }
 
   /**
