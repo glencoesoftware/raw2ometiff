@@ -921,7 +921,9 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
         maxWorkers, maxWorkers, 0L, TimeUnit.MILLISECONDS, tileQueue);
       convertPyramid(s);
     }
+    StopWatch t0 = new Slf4JStopWatch("writeIFDs");
     writeIFDs();
+    t0.stop();
     binaryOnly = null;
   }
 
@@ -1066,11 +1068,13 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
   }
 
   private void writeIFDs() throws FormatException, IOException {
+    StopWatch t0 = new Slf4JStopWatch("subifds");
     Map<String, Long> firstIFDOffsets = new HashMap<String, Long>();
 
     // write sub-IFDs for every series first
     long[][][] subs = new long[series.size()][][];
     for (PyramidSeries s : series) {
+      StopWatch t1 = new Slf4JStopWatch("subifd-" + s.index);
       String path = getSeriesPathName(s);
       try (RandomAccessOutputStream out = new RandomAccessOutputStream(path)) {
         out.order(s.littleEndian);
@@ -1101,11 +1105,16 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
         }
       }
       tiffSavers.remove(path);
+      t1.stop();
     }
+    t0.stop();
+
+    t0 = new Slf4JStopWatch("fullResolutionIFDs");
     // now write the full resolution IFD for each series
     if (!legacy) {
       firstIFDOffsets.clear();
       for (PyramidSeries s : series) {
+        StopWatch t1 = new Slf4JStopWatch("fullResolution-" + s.index);
         String path = getSeriesPathName(s);
         try (RandomAccessOutputStream out =
           new RandomAccessOutputStream(path))
@@ -1129,8 +1138,10 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
           out.writeLong(firstIFDOffsets.get(path));
         }
         tiffSavers.remove(path);
+        t1.stop();
       }
     }
+    t0.stop();
   }
 
   /**
