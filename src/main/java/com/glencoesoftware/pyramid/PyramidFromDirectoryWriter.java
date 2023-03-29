@@ -295,7 +295,9 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
       description = "Maximum number of workers (default: ${DEFAULT-VALUE})"
   )
   public void setMaxWorkers(int workers) {
-    maxWorkers = workers;
+    if (workers > 0) {
+      maxWorkers = workers;
+    }
   }
 
   /**
