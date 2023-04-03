@@ -11,6 +11,7 @@ import java.io.IOException;
 import java.nio.ByteOrder;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
@@ -52,6 +53,7 @@ import ome.units.UNITS;
 import ome.units.quantity.Length;
 import ome.xml.meta.OMEXMLMetadataRoot;
 import ome.xml.model.Channel;
+import ome.xml.model.FilterSet;
 import ome.xml.model.Pixels;
 import ome.xml.model.enums.DimensionOrder;
 import ome.xml.model.enums.EnumerationException;
@@ -118,76 +120,15 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
   private IProgressListener progressListener;
 
   /** Where to write? */
-  @Parameters(
-      index = "1",
-      arity = "1",
-      description = "Relative path to the output OME-TIFF file"
-  )
   Path outputFilePath;
-
-  /** Where to read? */
-  @Parameters(
-      index = "0",
-      arity = "1",
-      description = "Directory containing pixel data to convert"
-  )
   Path inputDirectory;
-
-  @Option(
-    names = {"--log-level", "--debug"},
-    arity = "0..1",
-    description = "Change logging level; valid values are " +
-      "OFF, ERROR, WARN, INFO, DEBUG, TRACE and ALL. " +
-      "(default: ${DEFAULT-VALUE})",
-    fallbackValue = "DEBUG"
-  )
   private volatile String logLevel = "WARN";
-
-  @Option(
-    names = {"-p", "--progress"},
-    description = "Print progress bars during conversion",
-    help = true
-  )
   private volatile boolean progressBars = false;
-
-  @Option(
-      names = "--version",
-      description = "Print version information and exit",
-      help = true
-  )
   boolean printVersion = false;
-
-  @Option(
-      names = "--compression",
-      completionCandidates = CompressionTypes.class,
-      description = "Compression type for output OME-TIFF file " +
-                    "(${COMPLETION-CANDIDATES}; default: ${DEFAULT-VALUE})"
-  )
-  String compression = "LZW";
-
-  @Option(
-      names = "--quality",
-      description = "Compression quality"
-  )
-  Double compressionQuality;
-
-  @Option(
-      names = "--legacy",
-      description = "Write a Bio-Formats 5.9.x pyramid instead of OME-TIFF"
-  )
+  CompressionType compression = CompressionType.LZW;
+  CodecOptions compressionOptions;
   boolean legacy = false;
-
-  @Option(
-      names = "--max_workers",
-      description = "Maximum number of workers (default: ${DEFAULT-VALUE})"
-  )
   int maxWorkers = Runtime.getRuntime().availableProcessors();
-
-  @Option(
-      names = "--rgb",
-      description = "Attempt to write channels as RGB; " +
-                    "channel count must be a multiple of 3"
-  )
   boolean rgb = false;
 
   private List<PyramidSeries> series = new ArrayList<PyramidSeries>();
@@ -204,6 +145,250 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
    */
   public PyramidFromDirectoryWriter() {
     tileQueue = new LimitedQueue<Runnable>(maxWorkers);
+  }
+
+  /**
+   * Where to write?
+   *
+   * @param output path to output TIFF
+   */
+  @Parameters(
+      index = "1",
+      arity = "1",
+      description = "Relative path to the output OME-TIFF file"
+  )
+  public void setOutputPath(String output) {
+    // could be expanded to allow other output locations
+    outputFilePath = Paths.get(output);
+  }
+
+  /**
+   * Where to read?
+   *
+   * @param input path to input Zarr directory
+   */
+  @Parameters(
+      index = "0",
+      arity = "1",
+      description = "Directory containing pixel data to convert"
+  )
+  public void setInputPath(String input) {
+    // could be expanded to allow other input locations
+    inputDirectory = Paths.get(input);
+  }
+
+  /**
+   * Set the slf4j logging level. Defaults to "WARN".
+   *
+   * @param level logging level
+   */
+  @Option(
+    names = {"--log-level", "--debug"},
+    arity = "0..1",
+    description = "Change logging level; valid values are " +
+      "OFF, ERROR, WARN, INFO, DEBUG, TRACE and ALL. " +
+      "(default: ${DEFAULT-VALUE})",
+    defaultValue = "WARN",
+    fallbackValue = "DEBUG"
+  )
+  public void setLogLevel(String level) {
+    logLevel = level;
+  }
+
+  /**
+   * Configure whether or not progress bars are shown during conversion.
+   * Progress bars are turned off by default.
+   *
+   * @param useProgressBars whether or not to show progress bars
+   */
+  @Option(
+    names = {"-p", "--progress"},
+    description = "Print progress bars during conversion",
+    help = true
+  )
+  public void setProgressBars(boolean useProgressBars) {
+    progressBars = useProgressBars;
+  }
+
+  /**
+   * Configure whether to print version information and exit
+   * without converting.
+   *
+   * @param versionOnly whether or not to print version information and exit
+   */
+  @Option(
+      names = "--version",
+      description = "Print version information and exit",
+      help = true
+  )
+  public void setPrintVersionOnly(boolean versionOnly) {
+    printVersion = versionOnly;
+  }
+
+  /**
+   * Set the compression type for the output OME-TIFF. Defaults to LZW.
+   * Valid types are defined in the CompressionType enum.
+   *
+   * @param compressionType compression type
+   */
+  @Option(
+      names = "--compression",
+      description = "Compression type for output OME-TIFF file " +
+                    "(${COMPLETION-CANDIDATES}; default: ${DEFAULT-VALUE})",
+      converter = CompressionTypeConverter.class,
+      defaultValue = "LZW"
+  )
+  public void setCompression(CompressionType compressionType) {
+    compression = compressionType;
+  }
+
+  /**
+   * Set the compression options.
+   *
+   * When using the command line "--quality" option, the quality value will be
+   * wrapped in a CodecOptions. The interpretation of the quality value
+   * depends upon the selected compression type.
+   *
+   * This value currently only applies to "JPEG-2000 Lossy" compression,
+   * and corresponds to the encoded bitrate in bits per pixel.
+   * The quality is a floating point number and must be greater than 0.
+   * A larger number implies less data loss but also larger file size.
+   * By default, the quality is set to the largest positive finite double value.
+   * This is equivalent to lossless compression; to see truly lossy compression,
+   * the quality should be set to less than the bit depth of the input image.
+   *
+   * Options other than quality may be specified in this object, but their
+   * interpretation will also depend upon the compression type selected.
+   * Options that conflict with the input data (e.g. bits per pixel)
+   * will be ignored.
+   *
+   * @param options compression options
+   */
+  @Option(
+      names = "--quality",
+      converter = CompressionQualityConverter.class,
+      description = "Compression quality"
+  )
+  public void setCompressionOptions(CodecOptions options) {
+    compressionOptions = options;
+  }
+
+  /**
+   * Configure whether to write a pyramid OME-TIFF compatible with
+   * Bio-Formats 6.x (the default), or a legacy pyramid TIFF compatible
+   * with Bio-Formats 5.9.x.
+   *
+   * @param legacyTIFF true if a legacy pyramid TIFF should be written
+   */
+  @Option(
+      names = "--legacy",
+      description = "Write a Bio-Formats 5.9.x pyramid instead of OME-TIFF"
+  )
+  public void setLegacyTIFF(boolean legacyTIFF) {
+    legacy = legacyTIFF;
+  }
+
+  /**
+   * Set the maximum number of workers to use for converting tiles.
+   * Defaults to the number of detected CPUs.
+   *
+   * @param workers maximum worker count
+   */
+  @Option(
+      names = "--max_workers",
+      description = "Maximum number of workers (default: ${DEFAULT-VALUE})"
+  )
+  public void setMaxWorkers(int workers) {
+    if (workers > 0) {
+      maxWorkers = workers;
+    }
+  }
+
+  /**
+   * Write an RGB TIFF, if the input data contains a multiple of 3 channels
+   * If RGB TIFFs are written, any channel metadata (names, wavelengths, etc.)
+   * in the input data will be lost.
+   *
+   * @param isRGB true if an RGB TIFF should be written
+   */
+  @Option(
+      names = "--rgb",
+      description = "Attempt to write channels as RGB; " +
+                    "channel count must be a multiple of 3"
+  )
+  public void setRGB(boolean isRGB) {
+    rgb = isRGB;
+  }
+
+  /**
+   * @return path to output data
+   */
+  public String getOutputPath() {
+    return outputFilePath.toString();
+  }
+
+  /**
+   * @return path to input data
+   */
+  public String getInputPath() {
+    return inputDirectory.toString();
+  }
+
+  /**
+   * @return slf4j logging level
+   */
+  public String getLogLevel() {
+    return logLevel;
+  }
+
+  /**
+   * @return true if progress bars are displayed
+   */
+  public boolean getProgressBars() {
+    return progressBars;
+  }
+
+  /**
+   * @return true if only version info is displayed
+   */
+  public boolean getPrintVersionOnly() {
+    return printVersion;
+  }
+
+  /**
+   * @return compression type
+   */
+  public CompressionType getCompression() {
+    return compression;
+  }
+
+  /**
+   * @return compression options
+   */
+  public CodecOptions getCompressionOptions() {
+    return compressionOptions;
+  }
+
+  /**
+   * @return true if a legacy pyramid TIFF will be written
+   *         instead of pyramid OME-TIFF
+   */
+  public boolean getLegacyTIFF() {
+    return legacy;
+  }
+
+  /**
+   * @return maximum number of worker threads
+   */
+  public int getMaxWorkers() {
+    return maxWorkers;
+  }
+
+  /**
+   * @return true if an RGB TIFF should be written
+   */
+  public boolean getRGB() {
+    return rgb;
   }
 
   /**
@@ -246,6 +431,12 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
 
     if (progressBars) {
       setProgressListener(new ProgressBarListener(logLevel));
+    }
+    if (inputDirectory == null) {
+      throw new IllegalArgumentException("Input directory not specified");
+    }
+    if (outputFilePath == null) {
+      throw new IllegalArgumentException("Output path not specified");
     }
 
     // Resolve symlinks
@@ -737,6 +928,35 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
         for (int index=0; index<pixels.sizeOfChannelList(); index++) {
           Channel channel = pixels.getChannel(index);
           channel.setSamplesPerPixel(new PositiveInteger(rgbChannels));
+          if (channel.getColor() != null) {
+            LOG.warn("Removing channel color");
+            channel.setColor(null);
+          }
+          if (channel.getEmissionWavelength() != null) {
+            LOG.warn("Removing channel emission wavelength");
+            channel.setEmissionWavelength(null);
+          }
+          if (channel.getExcitationWavelength() != null) {
+            LOG.warn("Removing channel excitation wavelength");
+            channel.setEmissionWavelength(null);
+          }
+          if (channel.getLightPath() != null) {
+            LOG.warn("Removing channel light path");
+            channel.setLightPath(null);
+          }
+          if (channel.getLightSourceSettings() != null) {
+            LOG.warn("Removing channel light source settings");
+            channel.setLightSourceSettings(null);
+          }
+          FilterSet filterSet = channel.getLinkedFilterSet();
+          if (filterSet != null) {
+            LOG.warn("Removing channel filter set");
+            channel.unlinkFilterSet(filterSet);
+          }
+          if (channel.getName() != null) {
+            LOG.warn("Removing channel name");
+            channel.setName(null);
+          }
         }
 
         // RGB data needs to have XYC* dimension order
@@ -1035,8 +1255,7 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
     ifd.put(IFD.IMAGE_LENGTH, (long) descriptor.sizeY);
     ifd.put(IFD.TILE_WIDTH, descriptor.tileSizeX);
     ifd.put(IFD.TILE_LENGTH, descriptor.tileSizeY);
-    ifd.put(IFD.COMPRESSION,
-      CompressionTypes.getTIFFCompression(compression).getCode());
+    ifd.put(IFD.COMPRESSION, compression.getTIFFCompression().getCode());
 
     ifd.put(IFD.PLANAR_CONFIGURATION, s.rgb ? 2 : 1);
 
@@ -1131,9 +1350,9 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
       s.index, imageNumber, tileIndex);
 
     IFD ifd = s.ifds[resolution].get(imageNumber);
-    TiffCompression tiffCompression =
-      CompressionTypes.getTIFFCompression(compression);
-    CodecOptions options = tiffCompression.getCompressionCodecOptions(ifd);
+    TiffCompression tiffCompression = compression.getTIFFCompression();
+    CodecOptions options =
+      tiffCompression.getCompressionCodecOptions(ifd, compressionOptions);
 
     // buffer has been padded to full tile width before calling writeTile
     // but is not necessarily full tile height (if in the bottom row)
@@ -1142,9 +1361,6 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
     options.height = buffer.length / (options.width * bpp);
     options.bitsPerSample = bpp * 8;
     options.channels = 1;
-    if (compressionQuality != null) {
-      options.quality = compressionQuality;
-    }
 
     byte[] realTile = tiffCompression.compress(buffer, options);
     LOG.debug("    writing {} compressed bytes at {}",

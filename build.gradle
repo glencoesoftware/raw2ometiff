@@ -13,7 +13,6 @@ sourceCompatibility = 1.8
 targetCompatibility = 1.8
 
 repositories {
-    jcenter()
     mavenCentral()
     maven {
         url 'https://artifacts.glencoesoftware.com/artifactory/ome.releases/'
@@ -40,7 +39,7 @@ dependencies {
     implementation 'com.bc.zarr:jzarr:0.3.5'
     implementation 'info.picocli:picocli:4.2.0'
     implementation 'me.tongfei:progressbar:0.9.0'
-    implementation 'ome:formats-bsd:6.11.1'
+    implementation 'ome:formats-bsd:6.12.0'
     implementation 'com.glencoesoftware:bioformats2raw:0.7.0'
     // be careful here, this is a newer version of org.json:json than formats-gpl uses
     implementation 'org.json:json:20190722'
@@ -57,8 +56,15 @@ test {
 jar {
     manifest {
         attributes(
-            "Main-Class": mainClassName,
-            "Implementation-Version": version
+            "Created-By": "Gradle ${gradle.gradleVersion}",
+            "Build-Jdk": "${System.properties['java.version']} (${System.properties['java.vendor']} ${System.properties['java.vm.version']})",
+            "Built-By": System.properties['user.name'],
+            "Built-On": new java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSSZ").format(new Date()),
+            "Implementation-Build": "git rev-parse --verify HEAD".execute().getText().trim(),
+            "Implementation-Title": "raw2ometiff converter",
+            "Implementation-Version": archiveVersion,
+            "Implementation-Vendor": "Glencoe Software Inc.",
+            "Main-Class": mainClassName
         )
     }
 }
