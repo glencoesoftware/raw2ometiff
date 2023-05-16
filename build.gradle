@@ -40,8 +40,7 @@ dependencies {
     implementation 'info.picocli:picocli:4.2.0'
     implementation 'me.tongfei:progressbar:0.9.0'
     implementation 'ome:formats-bsd:6.13.0'
-    // be careful here, this is a newer version of org.json:json than formats-gpl uses
-    implementation 'org.json:json:20190722'
+    implementation 'org.json:json:20230227'
     implementation group: 'ch.qos.logback', name: 'logback-classic', version: '1.3.4'
     implementation group: 'ch.qos.logback', name: 'logback-core', version: '1.3.4'
     testImplementation 'junit:junit:4.12'
