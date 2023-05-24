@@ -512,7 +512,7 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
       throws FormatException, IOException
   {
     int[] pos = FormatTools.rasterToPosition(s.dimensionLengths, no);
-    getProgressListener().notifyChunkStart(plane, x, y, pos[0]);
+    getProgressListener().notifyChunkStart(no, x, y, pos[0]);
     ResolutionDescriptor descriptor = s.resolutions.get(resolution);
     int realWidth = descriptor.tileSizeX;
     int realHeight = descriptor.tileSizeY;
@@ -1111,6 +1111,8 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
                     final int currentIndex = tileCount * ch + tileIndex;
                     final int currentPlane = plane;
                     final int currentResolution = resolution;
+                    final int xx = x;
+                    final int yy = y;
                     executor.execute(() -> {
                       Slf4JStopWatch t1 = new Slf4JStopWatch("writeTile");
                       try {
@@ -1119,7 +1121,7 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
                             region.height == descriptor.tileSizeY)
                           {
                             writeTile(s, currentPlane, tileBytes,
-                              currentIndex, currentResolution, x, y, z);
+                              currentIndex, currentResolution, xx, yy);
                           }
                           else {
                             // padded tile, use descriptor X and Y tile size
@@ -1135,7 +1137,7 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
                                 realTile, row * outRowLen, inRowLen);
                             }
                             writeTile(s, currentPlane, realTile,
-                              currentIndex, currentResolution, x, y, z);
+                              currentIndex, currentResolution, xx, yy);
                           }
                         }
                       }
@@ -1339,11 +1341,10 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
    * @param resolution resolution index of the tile
    * @param x tile index along X
    * @param y tile index along Y
-   * @param z Z index corresponding to imageNumber
    */
   private void writeTile(PyramidSeries s,
       Integer imageNumber, byte[] buffer, int tileIndex, int resolution,
-      int x, int y, int z)
+      int x, int y)
       throws FormatException, IOException
   {
     LOG.debug("Writing series: {}, image: {}, tileIndex: {}",
@@ -1367,6 +1368,7 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
       realTile.length, outStream.getFilePointer());
 
     writeToDisk(s, realTile, tileIndex, resolution, imageNumber);
+    int z = s.getZCTCoords(imageNumber)[0];
     getProgressListener().notifyChunkEnd(imageNumber, x, y, z);
   }
 
