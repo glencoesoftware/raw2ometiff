@@ -28,9 +28,6 @@ import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 
 import ch.qos.logback.classic.Level;
-import me.tongfei.progressbar.DelegatingProgressBarConsumer;
-import me.tongfei.progressbar.ProgressBar;
-import me.tongfei.progressbar.ProgressBarBuilder;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -73,6 +70,9 @@ import org.perf4j.slf4j.Slf4JStopWatch;
 import com.bc.zarr.DataType;
 import com.bc.zarr.ZarrArray;
 import com.bc.zarr.ZarrGroup;
+import com.glencoesoftware.bioformats2raw.IProgressListener;
+import com.glencoesoftware.bioformats2raw.NoOpProgressListener;
+import com.glencoesoftware.bioformats2raw.ProgressBarListener;
 import ucar.ma2.InvalidRangeException;
 
 import picocli.CommandLine;
@@ -118,6 +118,9 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
   private BlockingQueue<Runnable> tileQueue;
   private ExecutorService executor;
 
+  private IProgressListener progressListener;
+
+  /** Where to write? */
   Path outputFilePath;
   Path inputDirectory;
   private volatile String logLevel = "WARN";
@@ -426,6 +429,29 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
     CommandLine.call(new PyramidFromDirectoryWriter(), args);
   }
 
+  /**
+   * Set a listener for tile processing events.
+   * Intended to be used to show a status bar.
+   *
+   * @param listener a progress event listener
+   */
+  public void setProgressListener(IProgressListener listener) {
+    progressListener = listener;
+  }
+
+  /**
+   * Get the current listener for tile processing events.
+   * If no listener was set, a no-op listener is returned.
+   *
+   * @return the current progress listener
+   */
+  public IProgressListener getProgressListener() {
+    if (progressListener == null) {
+      setProgressListener(new NoOpProgressListener());
+    }
+    return progressListener;
+  }
+
   @Override
   public Void call() throws Exception {
     if (printVersion) {
@@ -433,6 +459,9 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
       return null;
     }
 
+    if (progressBars) {
+      setProgressListener(new ProgressBarListener(logLevel));
+    }
     if (inputDirectory == null) {
       throw new IllegalArgumentException("Input directory not specified");
     }
@@ -517,6 +546,8 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
       int no, int x, int y, Region region)
       throws FormatException, IOException
   {
+    int[] pos = FormatTools.rasterToPosition(s.dimensionLengths, no);
+    getProgressListener().notifyChunkStart(no, x, y, pos[0]);
     ResolutionDescriptor descriptor = s.resolutions.get(resolution);
     int realWidth = descriptor.tileSizeX;
     int realHeight = descriptor.tileSizeY;
@@ -525,7 +556,6 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
       realHeight = region.height;
     }
 
-    int[] pos = FormatTools.rasterToPosition(s.dimensionLengths, no);
     int[] gridPosition = new int[] {pos[2], pos[1], pos[0],
       y * descriptor.tileSizeY, x * descriptor.tileSizeX};
     int[] shape = new int[] {1, 1, 1, realHeight, realWidth};
@@ -1135,6 +1165,8 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
     throws FormatException, IOException,
       InterruptedException, DependencyException
   {
+    getProgressListener().notifySeriesStart(s.index);
+
     // convert every resolution in the pyramid
     s.ifds = new IFDList[s.numberOfResolutions];
     for (int resolution=0; resolution<s.numberOfResolutions; resolution++) {
@@ -1153,24 +1185,7 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
         ResolutionDescriptor descriptor = s.resolutions.get(resolution);
         int tileCount = descriptor.numberOfTilesY * descriptor.numberOfTilesX;
 
-        final ProgressBar pb;
-        if (progressBars) {
-          ProgressBarBuilder builder = new ProgressBarBuilder()
-            .setInitialMax(tileCount * s.planeCount)
-            .setTaskName(String.format("[%d/%d]", s.index, resolution));
-
-          if (!(logLevel.equals("OFF") ||
-            logLevel.equals("ERROR") ||
-            logLevel.equals("WARN")))
-          {
-            builder.setConsumer(new DelegatingProgressBarConsumer(LOG::trace));
-          }
-
-          pb = builder.build();
-        }
-        else {
-          pb = null;
-        }
+        getProgressListener().notifyResolutionStart(resolution, tileCount);
 
         int plane = 0;
         for (int t=0; t<s.t; t++) {
@@ -1212,6 +1227,8 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
                     final int currentIndex = tileCount * ch + tileIndex;
                     final int currentPlane = plane;
                     final int currentResolution = resolution;
+                    final int xx = x;
+                    final int yy = y;
                     executor.execute(() -> {
                       Slf4JStopWatch t1 = new Slf4JStopWatch("writeTile");
                       try {
@@ -1220,7 +1237,7 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
                             region.height == descriptor.tileSizeY)
                           {
                             writeTile(s, currentPlane, tileBytes,
-                              currentIndex, currentResolution);
+                              currentIndex, currentResolution, xx, yy);
                           }
                           else {
                             // padded tile, use descriptor X and Y tile size
@@ -1236,7 +1253,7 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
                                 realTile, row * outRowLen, inRowLen);
                             }
                             writeTile(s, currentPlane, realTile,
-                              currentIndex, currentResolution);
+                              currentIndex, currentResolution, xx, yy);
                           }
                         }
                       }
@@ -1247,9 +1264,6 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
                       }
                       finally {
                         t1.stop();
-                        if (pb != null) {
-                          pb.step();
-                        }
                       }
                     });
                   }
@@ -1259,15 +1273,13 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
           }
         }
 
-        if (pb != null) {
-          pb.close();
-        }
-
+        getProgressListener().notifyResolutionEnd(resolution);
       }
     }
     finally {
       executor.shutdown();
       executor.awaitTermination(Long.MAX_VALUE, TimeUnit.NANOSECONDS);
+      getProgressListener().notifySeriesEnd(s.index);
     }
   }
 
@@ -1494,9 +1506,12 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
    * @param buffer the array containing the tile's pixel data
    * @param tileIndex index of the tile to be written in XY space
    * @param resolution resolution index of the tile
+   * @param x tile index along X
+   * @param y tile index along Y
    */
   private void writeTile(PyramidSeries s,
-      Integer imageNumber, byte[] buffer, int tileIndex, int resolution)
+      Integer imageNumber, byte[] buffer, int tileIndex, int resolution,
+      int x, int y)
       throws FormatException, IOException
   {
     LOG.debug("Writing series: {}, image: {}, tileIndex: {}",
@@ -1518,6 +1533,8 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
     byte[] realTile = tiffCompression.compress(buffer, options);
 
     writeToDisk(s, realTile, tileIndex, resolution, imageNumber);
+    int z = s.getZCTCoords(imageNumber)[0];
+    getProgressListener().notifyChunkEnd(imageNumber, x, y, z);
   }
 
   /**

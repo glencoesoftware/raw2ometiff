@@ -11,6 +11,7 @@ import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
 import loci.formats.FormatException;
+import loci.formats.FormatTools;
 import loci.formats.ome.OMEPyramidStore;
 import loci.formats.tiff.IFDList;
 import org.slf4j.Logger;
@@ -130,6 +131,17 @@ public class PyramidSeries {
 
       resolutions.add(descriptor);
     }
+  }
+
+  /**
+   * Convenience method that delegates to FormatTools to calculate
+   * the Z, C, and T index for a given plane index.
+   *
+   * @param plane index
+   * @return array of Z, C, and T indexes
+   */
+  public int[] getZCTCoords(int plane) {
+    return FormatTools.getZCTCoords(dimensionOrder, z, c, t, planeCount, plane);
   }
 
   /**
