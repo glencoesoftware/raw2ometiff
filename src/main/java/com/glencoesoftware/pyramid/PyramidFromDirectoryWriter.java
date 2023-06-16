@@ -1184,8 +1184,9 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
         LOG.info("Converting resolution #{}", resolution);
         ResolutionDescriptor descriptor = s.resolutions.get(resolution);
         int tileCount = descriptor.numberOfTilesY * descriptor.numberOfTilesX;
+        int totalTileCount = tileCount * s.planeCount;
 
-        getProgressListener().notifyResolutionStart(resolution, tileCount);
+        getProgressListener().notifyResolutionStart(resolution, totalTileCount);
 
         int plane = 0;
         for (int t=0; t<s.t; t++) {
