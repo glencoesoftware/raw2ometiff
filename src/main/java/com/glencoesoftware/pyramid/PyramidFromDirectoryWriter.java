@@ -1151,8 +1151,6 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
       InterruptedException, DependencyException
   {
     for (PyramidSeries s : series) {
-      executor = new ThreadPoolExecutor(
-        maxWorkers, maxWorkers, 0L, TimeUnit.MILLISECONDS, tileQueue);
       convertPyramid(s);
     }
     StopWatch t0 = new Slf4JStopWatch("writeIFDs");
@@ -1179,13 +1177,17 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
 
     int rgbChannels = s.rgb ? 3 : 1;
     int bytesPerPixel = FormatTools.getBytesPerPixel(s.pixelType);
-    try {
-      for (int resolution=0; resolution<s.numberOfResolutions; resolution++) {
+    for (int resolution=0; resolution<s.numberOfResolutions; resolution++) {
+      executor = new ThreadPoolExecutor(
+        maxWorkers, maxWorkers, 0L, TimeUnit.MILLISECONDS, tileQueue);
+
+      try {
         LOG.info("Converting resolution #{}", resolution);
         ResolutionDescriptor descriptor = s.resolutions.get(resolution);
         int tileCount = descriptor.numberOfTilesY * descriptor.numberOfTilesX;
+        int totalTileCount = tileCount * s.planeCount;
 
-        getProgressListener().notifyResolutionStart(resolution, tileCount);
+        getProgressListener().notifyResolutionStart(resolution, totalTileCount);
 
         int plane = 0;
         for (int t=0; t<s.t; t++) {
@@ -1272,15 +1274,14 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
             }
           }
         }
-
+      }
+      finally {
+        executor.shutdown();
+        executor.awaitTermination(Long.MAX_VALUE, TimeUnit.NANOSECONDS);
         getProgressListener().notifyResolutionEnd(resolution);
       }
     }
-    finally {
-      executor.shutdown();
-      executor.awaitTermination(Long.MAX_VALUE, TimeUnit.NANOSECONDS);
-      getProgressListener().notifySeriesEnd(s.index);
-    }
+    getProgressListener().notifySeriesEnd(s.index);
   }
 
   private void writeIFDs() throws FormatException, IOException {
