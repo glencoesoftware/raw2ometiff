@@ -28,7 +28,7 @@ public class PyramidSeries {
   /** Path to series. */
   String path;
 
-  String uuid;
+  List<String> uuid = new ArrayList<String>();
 
   int index = -1;
 
