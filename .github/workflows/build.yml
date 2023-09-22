@@ -23,7 +23,6 @@ jobs:
         with:
           java-version: ${{ matrix.java }}
           distribution: 'zulu'
-          cache: "gradle"
       - name: Install libraries
         run: |
           sudo apt-get install -y libblosc1
