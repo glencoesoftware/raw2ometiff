@@ -422,6 +422,89 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
   }
 
   /**
+   * Reset all options to their default values.
+   */
+  public void resetOptions() {
+    resetOutputPath();
+    resetInputPath();
+    resetLogLevel();
+    resetProgressBars();
+    resetPrintVersionOnly();
+    resetCompression();
+    resetCompressionOptions();
+    resetLegacyTIFF();
+    resetSplitTIFFs();
+    resetMaxWorkers();
+    resetRGB();
+  }
+
+  /**
+   */
+  public void resetOutputPath() {
+    outputFilePath = null;
+  }
+
+  /**
+   */
+  public void resetInputPath() {
+    inputDirectory = null;
+  }
+
+  /**
+   */
+  public void resetLogLevel() {
+    logLevel = "WARN";
+  }
+
+  /**
+   */
+  public void resetProgressBars() {
+    progressBars = false;
+  }
+
+  /**
+   */
+  public void resetPrintVersionOnly() {
+    printVersion = false;
+  }
+
+  /**
+   */
+  public void resetCompression() {
+    compression = CompressionType.LZW;
+  }
+
+  /**
+   */
+  public void resetCompressionOptions() {
+    compressionOptions = null;
+  }
+
+  /**
+   */
+  public void resetLegacyTIFF() {
+    legacy = false;
+  }
+
+  /**
+   */
+  public void resetSplitTIFFs() {
+    splitBySeries = false;
+  }
+
+  /**
+   */
+  public void resetMaxWorkers() {
+    maxWorkers = Runtime.getRuntime().availableProcessors();
+  }
+
+  /**
+   */
+  public void resetRGB() {
+    rgb = false;
+  }
+
+  /**
    * Convert a pyramid based upon the provided command line arguments.
    * @param args command line arguments
    */
