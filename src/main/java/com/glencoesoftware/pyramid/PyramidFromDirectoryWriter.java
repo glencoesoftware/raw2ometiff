@@ -317,8 +317,9 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
       description = "Maximum number of workers (default: ${DEFAULT-VALUE})"
   )
   public void setMaxWorkers(int workers) {
-    if (workers > 0) {
+    if (workers > 0 && workers != maxWorkers) {
       maxWorkers = workers;
+      tileQueue = new LimitedQueue<Runnable>(maxWorkers);
     }
   }
 
@@ -495,7 +496,11 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
   /**
    */
   public void resetMaxWorkers() {
-    maxWorkers = Runtime.getRuntime().availableProcessors();
+    int defaultWorkers = Runtime.getRuntime().availableProcessors();
+    if (defaultWorkers != maxWorkers) {
+      maxWorkers = defaultWorkers;
+      tileQueue = new LimitedQueue<Runnable>(maxWorkers);
+    }
   }
 
   /**
