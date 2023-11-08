@@ -141,7 +141,9 @@ public class PyramidSeries {
    * @return array of Z, C, and T indexes
    */
   public int[] getZCTCoords(int plane) {
-    return FormatTools.getZCTCoords(dimensionOrder, z, c, t, planeCount, plane);
+    int effectiveC = rgb ? c / 3 : c;
+    return FormatTools.getZCTCoords(
+      dimensionOrder, z, effectiveC, t, planeCount, plane);
   }
 
   /**
