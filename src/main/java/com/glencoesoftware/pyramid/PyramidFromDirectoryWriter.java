@@ -1210,65 +1210,86 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
                     continue;
                   }
 
-                  for (int ch=0; ch<rgbChannels; ch++) {
-                    StopWatch t0 = new Slf4JStopWatch("getInputTileBytes");
-                    byte[] tileBytes;
-                    try {
+                  StopWatch t0 = new Slf4JStopWatch("getInputTileBytes");
+                  byte[] packedTileBytes = null;
+                  try {
+                    for (int ch=0; ch<rgbChannels; ch++) {
                       // assumes TCZYX order consistent with bioformats2raw
                       int planeIndex = FormatTools.positionToRaster(
                         s.dimensionLengths,
                         new int[] {z, c * rgbChannels + ch, t});
-                      tileBytes =
-                        getInputTileBytes(s, resolution, planeIndex,
-                        x, y, region);
-                    }
-                    finally {
-                      t0.stop();
-                    }
-
-                    final int currentIndex = tileCount * ch + tileIndex;
-                    final int currentPlane = plane;
-                    final int currentResolution = resolution;
-                    final int xx = x;
-                    final int yy = y;
-                    executor.execute(() -> {
-                      Slf4JStopWatch t1 = new Slf4JStopWatch("writeTile");
-                      try {
-                        if (tileBytes != null) {
-                          if (region.width == descriptor.tileSizeX &&
-                            region.height == descriptor.tileSizeY)
-                          {
-                            writeTile(s, currentPlane, tileBytes,
-                              currentIndex, currentResolution, xx, yy);
-                          }
-                          else {
-                            // padded tile, use descriptor X and Y tile size
-                            int tileX = descriptor.tileSizeX;
-                            int tileY = descriptor.tileSizeY;
-                            byte[] realTile =
-                              new byte[tileX * tileY * bytesPerPixel];
-                            int totalRows = region.height;
-                            int inRowLen = region.width * bytesPerPixel;
-                            int outRowLen = tileX * bytesPerPixel;
-                            for (int row=0; row<totalRows; row++) {
-                              System.arraycopy(tileBytes, row * inRowLen,
-                                realTile, row * outRowLen, inRowLen);
-                            }
-                            writeTile(s, currentPlane, realTile,
-                              currentIndex, currentResolution, xx, yy);
+                      byte[] componentBytes = getInputTileBytes(
+                        s, resolution, planeIndex, x, y, region);
+                      if (rgbChannels == 1) {
+                        packedTileBytes = componentBytes;
+                      }
+                      else {
+                        if (ch == 0) {
+                          packedTileBytes =
+                            new byte[componentBytes.length * rgbChannels];
+                        }
+                        // unpack componentBytes into packedTileBytes
+                        int pixels = componentBytes.length / bytesPerPixel;
+                        for (int pixel=0; pixel<pixels; pixel++) {
+                          int srcIndex = pixel * bytesPerPixel;
+                          int destIndex =
+                            bytesPerPixel * (pixel * rgbChannels + ch);
+                          for (int b=0; b<bytesPerPixel; b++) {
+                            packedTileBytes[destIndex + b] =
+                              componentBytes[srcIndex + b];
                           }
                         }
                       }
-                      catch (FormatException|IOException e) {
-                        LOG.error(
-                          "Failed to write tile in series {} resolution {}",
-                          s.index, currentResolution, e);
-                      }
-                      finally {
-                        t1.stop();
-                      }
-                    });
+                    }
                   }
+                  finally {
+                    t0.stop();
+                  }
+
+                  final int currentIndex = tileIndex;
+                  final int currentPlane = plane;
+                  final int currentResolution = resolution;
+                  final int xx = x;
+                  final int yy = y;
+                  final byte[] tileBytes = packedTileBytes;
+                  executor.execute(() -> {
+                    Slf4JStopWatch t1 = new Slf4JStopWatch("writeTile");
+                    try {
+                      if (tileBytes != null) {
+                        if (region.width == descriptor.tileSizeX &&
+                          region.height == descriptor.tileSizeY)
+                        {
+                          writeTile(s, currentPlane, tileBytes,
+                            currentIndex, currentResolution, xx, yy);
+                        }
+                        else {
+                          // padded tile, use descriptor X and Y tile size
+                          int tileX = descriptor.tileSizeX;
+                          int tileY = descriptor.tileSizeY;
+                          int pixelWidth = bytesPerPixel * rgbChannels;
+                          byte[] realTile =
+                            new byte[tileX * tileY * pixelWidth];
+                          int totalRows = region.height;
+                          int inRowLen = region.width * pixelWidth;
+                          int outRowLen = tileX * pixelWidth;
+                          for (int row=0; row<totalRows; row++) {
+                            System.arraycopy(tileBytes, row * inRowLen,
+                              realTile, row * outRowLen, inRowLen);
+                          }
+                          writeTile(s, currentPlane, realTile,
+                            currentIndex, currentResolution, xx, yy);
+                        }
+                      }
+                    }
+                    catch (FormatException|IOException e) {
+                      LOG.error(
+                        "Failed to write tile in series {} resolution {}",
+                        s.index, currentResolution, e);
+                    }
+                    finally {
+                      t1.stop();
+                    }
+                  });
                 }
               }
             }
@@ -1416,7 +1437,7 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
     ifd.put(IFD.TILE_LENGTH, descriptor.tileSizeY);
     ifd.put(IFD.COMPRESSION, compression.getTIFFCompression().getCode());
 
-    ifd.put(IFD.PLANAR_CONFIGURATION, s.rgb ? 2 : 1);
+    ifd.put(IFD.PLANAR_CONFIGURATION, 1);
 
     int sampleFormat = 1;
     if (FormatTools.isFloatingPoint(s.pixelType)) {
@@ -1473,8 +1494,7 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
       }
     }
 
-    int tileCount =
-      descriptor.numberOfTilesX * descriptor.numberOfTilesY * bps.length;
+    int tileCount = descriptor.numberOfTilesX * descriptor.numberOfTilesY;
     ifd.put(IFD.TILE_BYTE_COUNTS, new long[tileCount]);
     ifd.put(IFD.TILE_OFFSETS, new long[tileCount]);
 
@@ -1527,9 +1547,9 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
     // but is not necessarily full tile height (if in the bottom row)
     int bpp = FormatTools.getBytesPerPixel(s.pixelType);
     options.width = (int) ifd.getTileWidth();
-    options.height = buffer.length / (options.width * bpp);
+    options.channels = s.rgb ? 3 : 1;
+    options.height = buffer.length / (options.width * bpp * options.channels);
     options.bitsPerSample = bpp * 8;
-    options.channels = 1;
 
     byte[] realTile = tiffCompression.compress(buffer, options);
 
