@@ -661,6 +661,9 @@ public class ConversionTest {
 
     outputOmeTiff = output.resolve("output.ome.tiff");
     PyramidFromDirectoryWriter apiConverter = new PyramidFromDirectoryWriter();
+    CommandLine cmd = new CommandLine(apiConverter);
+    cmd.parseArgs();
+
     apiConverter.setInputPath(output.toString());
     apiConverter.setOutputPath(outputOmeTiff.toString());
     apiConverter.setCompression(CompressionType.UNCOMPRESSED);
