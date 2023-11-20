@@ -473,6 +473,7 @@ public class ConversionTest {
       Assert.assertNull(metadata.getChannelExcitationWavelength(0, 0));
       Assert.assertNull(metadata.getChannelName(0, 0));
     }
+    checkRGBIFDs();
   }
 
   /**
@@ -519,6 +520,7 @@ public class ConversionTest {
       Assert.assertNull(metadata.getChannelExcitationWavelength(0, 3));
       Assert.assertNull(metadata.getChannelName(0, 3));
     }
+    checkRGBIFDs();
   }
 
   /**
@@ -556,6 +558,7 @@ public class ConversionTest {
       Assert.assertNull(metadata.getChannelExcitationWavelength(0, 0));
       Assert.assertNull(metadata.getChannelName(0, 0));
     }
+    checkRGBIFDs();
   }
 
   /**
@@ -668,6 +671,7 @@ public class ConversionTest {
     apiConverter.call();
 
     iteratePixels();
+    checkRGBIFDs();
   }
 
   /**
@@ -685,6 +689,7 @@ public class ConversionTest {
       Assert.assertEquals(1, reader.getSeriesCount());
       Assert.assertEquals(3, reader.getRGBChannelCount());
     }
+    checkRGBIFDs();
   }
 
   /**
@@ -696,6 +701,22 @@ public class ConversionTest {
   public void testVersionOnly() throws Exception {
     CommandLine.call(
       new PyramidFromDirectoryWriter(), new String[] {"--version"});
+  }
+
+  private void checkRGBIFDs() throws FormatException, IOException {
+    try (TiffParser parser = new TiffParser(outputOmeTiff.toString())) {
+      IFDList mainIFDs = parser.getMainIFDs();
+      for (IFD ifd : mainIFDs) {
+        Assert.assertEquals(1, ifd.getPlanarConfiguration());
+        Assert.assertEquals(3, ifd.getSamplesPerPixel());
+
+        IFDList subresolutions = parser.getSubIFDs(ifd);
+        for (IFD subres : subresolutions) {
+          Assert.assertEquals(1, subres.getPlanarConfiguration());
+          Assert.assertEquals(3, ifd.getSamplesPerPixel());
+        }
+      }
+    }
   }
 
 }
