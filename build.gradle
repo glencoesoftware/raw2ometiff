@@ -33,7 +33,7 @@ dependencies {
     implementation 'dev.zarr:jzarr:0.4.2'
     implementation 'info.picocli:picocli:4.2.0'
     implementation 'me.tongfei:progressbar:0.9.0'
-    implementation 'ome:formats-bsd:7.0.0'
+    implementation 'ome:formats-bsd:7.0.1'
     implementation 'com.glencoesoftware:bioformats2raw:0.8.0-rc1'
     implementation 'org.json:json:20230227'
     implementation group: 'ch.qos.logback', name: 'logback-classic', version: '1.3.4'
