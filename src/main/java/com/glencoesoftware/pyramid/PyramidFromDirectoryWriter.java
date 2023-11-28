@@ -1176,8 +1176,22 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
     throws FormatException, IOException,
       InterruptedException, DependencyException
   {
-    for (PyramidSeries s : series) {
-      convertPyramid(s);
+    long tileCount = 0;
+    int[] seriesTileCount = new int[series.size()];
+    for (int s=0; s<series.size(); s++) {
+      PyramidSeries ps = series.get(s);
+      seriesTileCount[s] = 0;
+      for (int resolution=0; resolution<ps.numberOfResolutions; resolution++) {
+        ResolutionDescriptor descriptor = ps.resolutions.get(resolution);
+        int resTiles = descriptor.numberOfTilesY * descriptor.numberOfTilesX;
+        seriesTileCount[s] += resTiles * ps.planeCount;
+      }
+      tileCount += seriesTileCount[s];
+    }
+    getProgressListener().notifyStart(series.size(), tileCount);
+
+    for (int s=0; s<series.size(); s++) {
+      convertPyramid(series.get(s), seriesTileCount[s]);
     }
     StopWatch t0 = new Slf4JStopWatch("writeIFDs");
     writeIFDs();
@@ -1185,11 +1199,12 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
     binaryOnly = null;
   }
 
-  private void convertPyramid(PyramidSeries s)
+  private void convertPyramid(PyramidSeries s, int totalTileCount)
     throws FormatException, IOException,
       InterruptedException, DependencyException
   {
-    getProgressListener().notifySeriesStart(s.index);
+    getProgressListener().notifySeriesStart(
+      s.index, s.numberOfResolutions, totalTileCount);
 
     // convert every resolution in the pyramid
     s.ifds = new IFDList[s.numberOfResolutions];
@@ -1211,9 +1226,9 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
         LOG.info("Converting resolution #{}", resolution);
         ResolutionDescriptor descriptor = s.resolutions.get(resolution);
         int tileCount = descriptor.numberOfTilesY * descriptor.numberOfTilesX;
-        int totalTileCount = tileCount * s.planeCount;
+        int resTileCount = tileCount * s.planeCount;
 
-        getProgressListener().notifyResolutionStart(resolution, totalTileCount);
+        getProgressListener().notifyResolutionStart(resolution, resTileCount);
 
         int plane = 0;
         for (int t=0; t<s.t; t++) {
