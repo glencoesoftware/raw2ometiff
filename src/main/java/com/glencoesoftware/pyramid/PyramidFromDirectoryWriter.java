@@ -368,6 +368,9 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
    * @return path to output data
    */
   public String getOutputPath() {
+    if (outputFilePath == null) {
+      return null;
+    }
     return outputFilePath.toString();
   }
 
@@ -375,6 +378,9 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
    * @return path to input data
    */
   public String getInputPath() {
+    if (inputDirectory == null) {
+      return null;
+    }
     return inputDirectory.toString();
   }
 

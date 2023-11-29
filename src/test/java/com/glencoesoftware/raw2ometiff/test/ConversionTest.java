@@ -674,6 +674,61 @@ public class ConversionTest {
   }
 
   /**
+   * Test resetting options to their default values.
+   */
+  @Test
+  public void testResetAPI() throws Exception {
+    input = fake("sizeC", "12", "rgb", "3");
+    assertBioFormats2Raw();
+
+    outputOmeTiff = output.resolve("output.ome.tiff");
+
+    // make sure default options are set
+    PyramidFromDirectoryWriter apiConverter = new PyramidFromDirectoryWriter();
+    CommandLine cmd = new CommandLine(apiConverter);
+    cmd.parseArgs();
+
+    Assert.assertEquals(apiConverter.getInputPath(), null);
+    Assert.assertEquals(apiConverter.getOutputPath(), null);
+    Assert.assertEquals(apiConverter.getCompression(), CompressionType.LZW);
+    Assert.assertEquals(apiConverter.getRGB(), false);
+    Assert.assertEquals(apiConverter.getLegacyTIFF(), false);
+    Assert.assertEquals(apiConverter.getSplitTIFFs(), false);
+
+    // override default options, as though to start a conversion
+    apiConverter.setInputPath(output.toString());
+    apiConverter.setOutputPath(outputOmeTiff.toString());
+    apiConverter.setCompression(CompressionType.UNCOMPRESSED);
+    apiConverter.setRGB(true);
+
+    // change our minds and reset the options to defaults again
+    cmd.parseArgs();
+
+    Assert.assertEquals(apiConverter.getInputPath(), null);
+    Assert.assertEquals(apiConverter.getOutputPath(), null);
+    Assert.assertEquals(apiConverter.getCompression(), CompressionType.LZW);
+    Assert.assertEquals(apiConverter.getRGB(), false);
+    Assert.assertEquals(apiConverter.getLegacyTIFF(), false);
+    Assert.assertEquals(apiConverter.getSplitTIFFs(), false);
+
+    // update options, make sure they were set, and actually convert
+    apiConverter.setInputPath(output.toString());
+    apiConverter.setOutputPath(outputOmeTiff.toString());
+    apiConverter.setCompression(CompressionType.UNCOMPRESSED);
+    apiConverter.setRGB(true);
+
+    Assert.assertEquals(apiConverter.getInputPath(), output.toString());
+    Assert.assertEquals(apiConverter.getOutputPath(), outputOmeTiff.toString());
+    Assert.assertEquals(apiConverter.getCompression(),
+      CompressionType.UNCOMPRESSED);
+    Assert.assertEquals(apiConverter.getRGB(), true);
+
+    apiConverter.call();
+
+    iteratePixels();
+  }
+
+  /**
    * Test "--quality" command line option.
    */
   @Test
