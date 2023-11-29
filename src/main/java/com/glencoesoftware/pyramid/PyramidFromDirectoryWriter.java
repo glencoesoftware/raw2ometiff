@@ -839,7 +839,8 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
    * After this method is called, image data can be written.
    */
   public void initialize()
-    throws FormatException, IOException, DependencyException
+    throws FormatException, InterruptedException,
+      IOException, DependencyException
   {
     createReader();
 
@@ -905,6 +906,9 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
     int totalPlanes = 0;
     seriesPaths = new ArrayList<Path>(seriesCount);
     for (int seriesIndex=0; seriesIndex<seriesCount; seriesIndex++) {
+      if (Thread.currentThread().isInterrupted()) {
+        throw new InterruptedException("Stopping in series " + seriesIndex);
+      }
       PyramidSeries s = new PyramidSeries();
       s.index = seriesIndex;
       findNumberOfResolutions(s);
