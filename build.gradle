@@ -31,7 +31,7 @@ repositories {
 dependencies {
     implementation 'net.java.dev.jna:jna:5.10.0'
     implementation 'dev.zarr:jzarr:0.4.2'
-    implementation 'info.picocli:picocli:4.2.0'
+    implementation 'info.picocli:picocli:4.7.5'
     implementation 'me.tongfei:progressbar:0.9.0'
     implementation 'ome:formats-bsd:7.0.1'
     implementation 'com.glencoesoftware:bioformats2raw:0.8.0-rc1'

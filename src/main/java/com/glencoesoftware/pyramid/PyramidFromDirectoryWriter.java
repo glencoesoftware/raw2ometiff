@@ -123,13 +123,13 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
   /** Where to write? */
   Path outputFilePath;
   Path inputDirectory;
-  private volatile String logLevel = "WARN";
+  private volatile String logLevel;
   private volatile boolean progressBars = false;
   boolean printVersion = false;
-  CompressionType compression = CompressionType.LZW;
+  CompressionType compression;
   CodecOptions compressionOptions;
   boolean legacy = false;
-  int maxWorkers = Runtime.getRuntime().availableProcessors();
+  int maxWorkers;
   boolean rgb = false;
 
   private List<PyramidSeries> series = new ArrayList<PyramidSeries>();
@@ -148,7 +148,6 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
    * Construct a writer for performing the pyramid conversion.
    */
   public PyramidFromDirectoryWriter() {
-    tileQueue = new LimitedQueue<Runnable>(maxWorkers);
   }
 
   /**
@@ -159,11 +158,17 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
   @Parameters(
       index = "1",
       arity = "1",
-      description = "Relative path to the output OME-TIFF file"
+      description = "Relative path to the output OME-TIFF file",
+      defaultValue = Option.NULL_VALUE
   )
   public void setOutputPath(String output) {
     // could be expanded to allow other output locations
-    outputFilePath = Paths.get(output);
+    if (output != null) {
+      outputFilePath = Paths.get(output);
+    }
+    else {
+      outputFilePath = null;
+    }
   }
 
   /**
@@ -174,11 +179,17 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
   @Parameters(
       index = "0",
       arity = "1",
-      description = "Directory containing pixel data to convert"
+      description = "Directory containing pixel data to convert",
+      defaultValue = Option.NULL_VALUE
   )
   public void setInputPath(String input) {
     // could be expanded to allow other input locations
-    inputDirectory = Paths.get(input);
+    if (input != null) {
+      inputDirectory = Paths.get(input);
+    }
+    else {
+      inputDirectory = null;
+    }
   }
 
   /**
@@ -208,7 +219,8 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
   @Option(
     names = {"-p", "--progress"},
     description = "Print progress bars during conversion",
-    help = true
+    help = true,
+    defaultValue = "false"
   )
   public void setProgressBars(boolean useProgressBars) {
     progressBars = useProgressBars;
@@ -223,7 +235,8 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
   @Option(
       names = "--version",
       description = "Print version information and exit",
-      help = true
+      help = true,
+      defaultValue = "false"
   )
   public void setPrintVersionOnly(boolean versionOnly) {
     printVersion = versionOnly;
@@ -271,7 +284,8 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
   @Option(
       names = "--quality",
       converter = CompressionQualityConverter.class,
-      description = "Compression quality"
+      description = "Compression quality",
+      defaultValue = Option.NULL_VALUE
   )
   public void setCompressionOptions(CodecOptions options) {
     compressionOptions = options;
@@ -286,7 +300,8 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
    */
   @Option(
       names = "--legacy",
-      description = "Write a Bio-Formats 5.9.x pyramid instead of OME-TIFF"
+      description = "Write a Bio-Formats 5.9.x pyramid instead of OME-TIFF",
+      defaultValue = "false"
   )
   public void setLegacyTIFF(boolean legacyTIFF) {
     legacy = legacyTIFF;
@@ -300,7 +315,8 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
   @Option(
       names = "--split",
       description =
-        "Split output into one OME-TIFF file per OME Image/Zarr group"
+        "Split output into one OME-TIFF file per OME Image/Zarr group",
+      defaultValue = "false"
   )
   public void setSplitTIFFs(boolean split) {
     splitBySeries = split;
@@ -308,17 +324,26 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
 
   /**
    * Set the maximum number of workers to use for converting tiles.
-   * Defaults to the number of detected CPUs.
+   * Defaults to 4 or the number of detected CPUs, whichever is smaller.
    *
    * @param workers maximum worker count
    */
   @Option(
       names = "--max_workers",
-      description = "Maximum number of workers (default: ${DEFAULT-VALUE})"
+      description = "Maximum number of workers (default: ${DEFAULT-VALUE})",
+      defaultValue = "4"
   )
   public void setMaxWorkers(int workers) {
-    if (workers > 0) {
+    int availableProcessors = Runtime.getRuntime().availableProcessors();
+    int prevWorkers = getMaxWorkers();
+    if (workers > availableProcessors) {
+      maxWorkers = availableProcessors;
+    }
+    else if (workers > 0 && workers != maxWorkers) {
       maxWorkers = workers;
+    }
+    if (prevWorkers != maxWorkers) {
+      tileQueue = new LimitedQueue<Runnable>(maxWorkers);
     }
   }
 
@@ -332,7 +357,8 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
   @Option(
       names = "--rgb",
       description = "Attempt to write channels as RGB; " +
-                    "channel count must be a multiple of 3"
+                    "channel count must be a multiple of 3",
+      defaultValue = "false"
   )
   public void setRGB(boolean isRGB) {
     rgb = isRGB;
@@ -342,6 +368,9 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
    * @return path to output data
    */
   public String getOutputPath() {
+    if (outputFilePath == null) {
+      return null;
+    }
     return outputFilePath.toString();
   }
 
@@ -349,6 +378,9 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
    * @return path to input data
    */
   public String getInputPath() {
+    if (inputDirectory == null) {
+      return null;
+    }
     return inputDirectory.toString();
   }
 
