@@ -23,7 +23,7 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.Callable;
-import java.util.concurrent.ExecutorService;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 
@@ -116,7 +116,7 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
   private List<Path> seriesPaths;
 
   private BlockingQueue<Runnable> tileQueue;
-  private ExecutorService executor;
+  private ThreadPoolExecutor executor;
 
   private IProgressListener progressListener;
 
@@ -344,6 +344,8 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
     }
     if (prevWorkers != maxWorkers) {
       tileQueue = new LimitedQueue<Runnable>(maxWorkers);
+      executor = new ThreadPoolExecutor(
+        maxWorkers, maxWorkers, 0L, TimeUnit.MILLISECONDS, tileQueue);
     }
   }
 
@@ -451,6 +453,13 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
    */
   public boolean getRGB() {
     return rgb;
+  }
+
+  /**
+   * @return the underlying ThreadPoolExecutor that manages tile conversions
+   */
+  public ThreadPoolExecutor getTileExecutor() {
+    return executor;
   }
 
   /**
@@ -1196,8 +1205,14 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
     }
     getProgressListener().notifyStart(series.size(), tileCount);
 
-    for (int s=0; s<series.size(); s++) {
-      convertPyramid(series.get(s), seriesTileCount[s]);
+    try {
+      for (int s=0; s<series.size(); s++) {
+        convertPyramid(series.get(s), seriesTileCount[s]);
+      }
+    }
+    finally {
+      executor.shutdown();
+      executor.awaitTermination(Long.MAX_VALUE, TimeUnit.NANOSECONDS);
     }
     StopWatch t0 = new Slf4JStopWatch("writeIFDs");
     writeIFDs();
@@ -1225,9 +1240,8 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
     int rgbChannels = s.rgb ? 3 : 1;
     int bytesPerPixel = FormatTools.getBytesPerPixel(s.pixelType);
     for (int resolution=0; resolution<s.numberOfResolutions; resolution++) {
-      executor = new ThreadPoolExecutor(
-        maxWorkers, maxWorkers, 0L, TimeUnit.MILLISECONDS, tileQueue);
-
+      List<CompletableFuture<Void>> futures =
+        new ArrayList<CompletableFuture<Void>>();
       try {
         LOG.info("Converting resolution #{}", resolution);
         ResolutionDescriptor descriptor = s.resolutions.get(resolution);
@@ -1272,6 +1286,9 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
                     finally {
                       t0.stop();
                     }
+                    CompletableFuture<Void> future =
+                        new CompletableFuture<Void>();
+                    futures.add(future);
 
                     final int currentIndex = tileCount * ch + tileIndex;
                     final int currentPlane = plane;
@@ -1305,8 +1322,10 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
                               currentIndex, currentResolution, xx, yy);
                           }
                         }
+                        future.complete(null);
                       }
                       catch (FormatException|IOException e) {
+                        future.completeExceptionally(e);
                         LOG.error(
                           "Failed to write tile in series {} resolution {}",
                           s.index, currentResolution, e);
@@ -1323,8 +1342,11 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
         }
       }
       finally {
-        executor.shutdown();
-        executor.awaitTermination(Long.MAX_VALUE, TimeUnit.NANOSECONDS);
+        // Wait until the entire resolution has completed before proceeding to
+        // the next one
+        CompletableFuture.allOf(
+          futures.toArray(new CompletableFuture[futures.size()])).join();
+
         getProgressListener().notifyResolutionEnd(resolution);
       }
     }

@@ -710,18 +710,25 @@ public class ConversionTest {
     Assert.assertEquals(apiConverter.getRGB(), false);
     Assert.assertEquals(apiConverter.getLegacyTIFF(), false);
     Assert.assertEquals(apiConverter.getSplitTIFFs(), false);
+    Assert.assertNotNull(apiConverter.getTileExecutor());
+    Assert.assertEquals(
+      apiConverter.getTileExecutor().getCorePoolSize(),
+      Math.min(4, Runtime.getRuntime().availableProcessors()));
 
     // update options, make sure they were set, and actually convert
     apiConverter.setInputPath(output.toString());
     apiConverter.setOutputPath(outputOmeTiff.toString());
     apiConverter.setCompression(CompressionType.UNCOMPRESSED);
     apiConverter.setRGB(true);
+    apiConverter.setMaxWorkers(1);
 
     Assert.assertEquals(apiConverter.getInputPath(), output.toString());
     Assert.assertEquals(apiConverter.getOutputPath(), outputOmeTiff.toString());
     Assert.assertEquals(apiConverter.getCompression(),
       CompressionType.UNCOMPRESSED);
     Assert.assertEquals(apiConverter.getRGB(), true);
+    Assert.assertNotNull(apiConverter.getTileExecutor());
+    Assert.assertEquals(apiConverter.getTileExecutor().getCorePoolSize(), 1);
 
     apiConverter.call();
 
