@@ -89,6 +89,10 @@ To see truly lossy compression, the quality should be set to less than the bit d
 We recommend experimenting with different quality values between 0.25 and the bit depth of the input image to find an acceptable tradeoff
 between file size and visual appeal of the converted images.
 
+If the `--rgb` option is set, the data will be stored in the OME-TIFF using
+the [chunky format](https://www.awaresystems.be/imaging/tiff/tifftags/planarconfiguration.html)
+and the [RGB color space](https://www.awaresystems.be/imaging/tiff/tifftags/photometricinterpretation.html).
+
 Tile compression is performed in parallel.  The number of workers can be changed using the `--max_workers` option.
 
 `axes` and `transformations` metadata in the input Zarr will be ignored. This metadata is assumed to be consistent
