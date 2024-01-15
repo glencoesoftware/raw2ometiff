@@ -486,6 +486,8 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
 
   @Override
   public Void call() throws Exception {
+    setupLogger();
+
     if (printVersion) {
       printVersion();
       return null;
@@ -503,8 +505,6 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
 
     // Resolve symlinks
     inputDirectory = inputDirectory.toRealPath();
-
-    setupLogger();
 
     // we could support this case later, just keeping it simple for now
     if (splitBySeries && legacy) {
