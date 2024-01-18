@@ -136,6 +136,7 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
   private List<PyramidSeries> series = new ArrayList<PyramidSeries>();
   private Map<String, TiffSaver> tiffSavers = new HashMap<String, TiffSaver>();
   boolean splitBySeries = false;
+  boolean splitByPlane = false;
 
   private ZarrGroup reader = null;
 
@@ -338,6 +339,20 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
   }
 
   /**
+   * Configure whether to write one OME-TIFF per plane.
+   *
+   * @param split true if output should be split into one OME-TIFF per plane
+   */
+  @Option(
+      names = "--split-planes",
+      description =
+        "Split output into one OME-TIFF file per plane"
+  )
+  public void setSplitSinglePlaneTIFFs(boolean split) {
+    splitByPlane = split;
+  }
+
+  /**
    * Set the maximum number of workers to use for converting tiles.
    * Defaults to 4 or the number of detected CPUs, whichever is smaller.
    *
@@ -462,6 +477,13 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
   }
 
   /**
+   * @return true if output will be split into one OME-TIFF per plane
+   */
+  public boolean getSplitSinglePlaneTIFFs() {
+    return splitByPlane;
+  }
+
+  /**
    * @return maximum number of worker threads
    */
   public int getMaxWorkers() {
@@ -533,8 +555,9 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
     inputDirectory = inputDirectory.toRealPath();
 
     // we could support this case later, just keeping it simple for now
-    if (splitBySeries && legacy) {
-      throw new IllegalArgumentException("--split not supported with --legacy");
+    if ((splitBySeries || splitByPlane) && legacy) {
+      throw new IllegalArgumentException(
+        "--split and --split-planes not supported with --legacy");
     }
 
     try {
@@ -1069,12 +1092,9 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
       }
 
       s.planeCount *= effectiveChannels;
-
       s.describePyramid(reader, metadata);
 
       metadata.setTiffDataIFD(new NonNegativeInteger(totalPlanes), s.index, 0);
-      metadata.setTiffDataPlaneCount(
-        new NonNegativeInteger(s.planeCount), s.index, 0);
 
       for (ResolutionDescriptor descriptor : s.resolutions) {
         LOG.info("Adding metadata for resolution: {}",
@@ -1107,22 +1127,39 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
       series.add(s);
       totalPlanes += s.planeCount;
 
-      if (splitBySeries) {
+      if (splitBySeries && !splitByPlane) {
         String basePath = getOutputPathPrefix();
         // append the series index and file extension
         basePath += "_s";
         seriesPaths.add(Paths.get(basePath + s.index + ".ome.tiff"));
         // generate one UUID per file
-        s.uuid = "urn:uuid:" + UUID.randomUUID().toString();
+        s.uuid.add("urn:uuid:" + UUID.randomUUID().toString());
+      }
+      else if (splitByPlane) {
+        String basePath = getOutputPathPrefix();
+        // append the series index and file extension
+        basePath += "_s";
+        basePath += s.index;
+        basePath += "_z";
+        for (int t=0; t<s.t; t++) {
+          for (int c=0; c<effectiveChannels; c++) {
+            for (int z=0; z<s.z; z++) {
+              seriesPaths.add(
+                Paths.get(basePath + z + "_c" + c + "_t" + t + ".ome.tiff"));
+              // generate one UUID per file
+              s.uuid.add("urn:uuid:" + UUID.randomUUID().toString());
+            }
+          }
+        }
       }
       else {
         seriesPaths.add(outputFilePath);
         // use the same UUID everywhere since we're only writing one file
         if (seriesIndex == 0) {
-          s.uuid = "urn:uuid:" + UUID.randomUUID().toString();
+          s.uuid.add("urn:uuid:" + UUID.randomUUID().toString());
         }
         else {
-          s.uuid = series.get(0).uuid;
+          s.uuid.add(series.get(0).uuid.get(0));
         }
       }
     }
@@ -1130,7 +1167,7 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
     populateTiffData();
     populateOriginalMetadata(service);
 
-    if (splitBySeries) {
+    if (splitBySeries || splitByPlane) {
       // splitting into separate OME-TIFFs results in a companion OME-XML file
       // the OME-TIFFs then use the BinaryOnly element to reference the OME-XML
       // for large plates in particular, this is useful as it reduces the
@@ -1195,7 +1232,19 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
     return w;
   }
 
-  private String getSeriesPathName(PyramidSeries s) {
+  private String getPathName(PyramidSeries s, int plane) {
+    if (splitByPlane) {
+      int index = 0;
+      for (int i=0; i<series.size(); i++) {
+        if (!series.get(i).equals(s)) {
+          index += series.get(i).uuid.size();
+        }
+        else {
+          break;
+        }
+      }
+      return seriesPaths.get(index + plane).toString();
+    }
     return seriesPaths.get(s.index).toString();
   }
 
@@ -1386,7 +1435,7 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
     long[][][] subs = new long[series.size()][][];
     for (PyramidSeries s : series) {
       StopWatch t1 = new Slf4JStopWatch("subifd-" + s.index);
-      String path = getSeriesPathName(s);
+      String path = getPathName(s, 0);
       try (RandomAccessOutputStream out = new RandomAccessOutputStream(path)) {
         out.order(s.littleEndian);
         out.seek(out.length());
@@ -1408,9 +1457,25 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
         else {
           subs[s.index] = new long[s.planeCount][s.numberOfResolutions - 1];
           for (int plane=0; plane<s.planeCount; plane++) {
-            for (int r=1; r<s.numberOfResolutions; r++) {
-              subs[s.index][plane][r - 1] = out.getFilePointer();
-              writeIFD(out, s, r, plane, r < s.numberOfResolutions - 1);
+            if (splitByPlane) {
+              String planePath = getPathName(s, plane);
+              try (RandomAccessOutputStream p =
+                new RandomAccessOutputStream(planePath))
+              {
+                p.order(s.littleEndian);
+                p.seek(p.length());
+                for (int r=1; r<s.numberOfResolutions; r++) {
+                  subs[s.index][plane][r - 1] = p.getFilePointer();
+                  writeIFD(p, s, r, plane, r < s.numberOfResolutions - 1);
+                }
+              }
+              tiffSavers.remove(planePath);
+            }
+            else {
+              for (int r=1; r<s.numberOfResolutions; r++) {
+                subs[s.index][plane][r - 1] = out.getFilePointer();
+                writeIFD(out, s, r, plane, r < s.numberOfResolutions - 1);
+              }
             }
           }
         }
@@ -1426,7 +1491,7 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
       firstIFDOffsets.clear();
       for (PyramidSeries s : series) {
         StopWatch t1 = new Slf4JStopWatch("fullResolution-" + s.index);
-        String path = getSeriesPathName(s);
+        String path = getPathName(s, 0);
         try (RandomAccessOutputStream out =
           new RandomAccessOutputStream(path))
         {
@@ -1439,14 +1504,33 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
 
           for (int plane=0; plane<s.planeCount; plane++) {
             s.ifds[0].get(plane).put(IFD.SUB_IFD, subs[s.index][plane]);
-            boolean overwrite = plane < s.planeCount - 1;
-            if (!splitBySeries) {
-              overwrite = overwrite || s.index < series.size() - 1;
+            // if splitting by plane, the first IFD is also the last in the file
+            if (!splitByPlane) {
+              boolean overwrite = plane < s.planeCount - 1;
+              if (!splitBySeries) {
+                overwrite = overwrite || s.index < series.size() - 1;
+              }
+              writeIFD(out, s, 0, plane, overwrite);
             }
-            writeIFD(out, s, 0, plane, overwrite);
+            else {
+              String planePath = getPathName(s, plane);
+              try (RandomAccessOutputStream p =
+                new RandomAccessOutputStream(planePath))
+              {
+                p.order(s.littleEndian);
+                long offset = p.length();
+                p.seek(offset);
+                writeIFD(p, s, 0, plane, false);
+                p.seek(FIRST_IFD_OFFSET);
+                p.writeLong(offset);
+              }
+              tiffSavers.remove(planePath);
+            }
           }
-          out.seek(FIRST_IFD_OFFSET);
-          out.writeLong(firstIFDOffsets.get(path));
+          if (!splitByPlane) {
+            out.seek(FIRST_IFD_OFFSET);
+            out.writeLong(firstIFDOffsets.get(path));
+          }
         }
         tiffSavers.remove(path);
         t1.stop();
@@ -1545,18 +1629,18 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
     }
 
     // only write the OME-XML to the first full-resolution IFD
-    if (resolution == 0 && plane == 0) {
-      if (splitBySeries) {
+    if (resolution == 0 && (plane == 0 || splitByPlane)) {
+      if (splitBySeries || splitByPlane) {
         // if each series is in a separate OME-TIFF, store BinaryOnly OME-XML
         // that references the companion OME-XML file
 
-        String omexml = getBinaryOnlyOMEXML(s);
+        String omexml = getBinaryOnlyOMEXML(s, plane);
         ifd.put(IFD.IMAGE_DESCRIPTION, omexml);
       }
       else if (s.index == 0) {
         // if everything is in one OME-TIFF file, store the complete OME-XML
         try {
-          metadata.setUUID(s.uuid);
+          metadata.setUUID(s.uuid.get(0));
           OMEXMLService service = getService();
           String omexml = service.getOMEXML(metadata);
           ifd.put(IFD.IMAGE_DESCRIPTION, omexml);
@@ -1655,7 +1739,7 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
     long[] byteCounts = ifd.getIFDLongArray(IFD.TILE_BYTE_COUNTS);
     byteCounts[tileIndex] = (long) realTile.length;
 
-    String file = getSeriesPathName(s);
+    String file = getPathName(s, imageNumber);
     try (RandomAccessOutputStream out = new RandomAccessOutputStream(file)) {
       out.seek(out.length());
       offsets[tileIndex] = out.getFilePointer();
@@ -1694,7 +1778,7 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
     PyramidSeries s, int resolution, int plane, boolean overwrite)
     throws FormatException, IOException
   {
-    TiffSaver writer = createTiffSaver(outStream, getSeriesPathName(s));
+    TiffSaver writer = createTiffSaver(outStream, getPathName(s, plane));
     int ifdSize = getIFDSize(s.ifds[resolution].get(plane));
     long offsetPointer = outStream.getFilePointer() + ifdSize;
     writer.writeIFD(s.ifds[resolution].get(plane), 0);
@@ -1739,11 +1823,31 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
 
   private void populateTiffData() {
     for (PyramidSeries s : series) {
-      metadata.setUUIDFileName(
-        Paths.get(getSeriesPathName(s)).getFileName().toString(), s.index, 0);
-      metadata.setUUIDValue(s.uuid, s.index, 0);
-      if (splitBySeries) {
-        metadata.setTiffDataIFD(new NonNegativeInteger(0), s.index, 0);
+      for (int tiffData=0; tiffData<s.uuid.size(); tiffData++) {
+        String path = getPathName(s, tiffData);
+        metadata.setUUIDFileName(
+          Paths.get(path).getFileName().toString(), s.index, tiffData);
+        metadata.setUUIDValue(s.uuid.get(tiffData), s.index, tiffData);
+
+        if (splitByPlane) {
+          int[] zct = s.getZCTCoords(tiffData);
+          metadata.setTiffDataFirstZ(
+            new NonNegativeInteger(zct[0]), s.index, tiffData);
+          metadata.setTiffDataFirstC(
+            new NonNegativeInteger(zct[1]), s.index, tiffData);
+          metadata.setTiffDataFirstT(
+            new NonNegativeInteger(zct[2]), s.index, tiffData);
+          metadata.setTiffDataPlaneCount(
+            new NonNegativeInteger(1), s.index, tiffData);
+        }
+        else {
+          metadata.setTiffDataPlaneCount(
+            new NonNegativeInteger(s.planeCount), s.index, tiffData);
+        }
+
+        if (splitBySeries || splitByPlane) {
+          metadata.setTiffDataIFD(new NonNegativeInteger(0), s.index, tiffData);
+        }
       }
     }
   }
@@ -1755,9 +1859,10 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
    * to have BinaryOnly OME-XML that references the companion OME-XML file.
    *
    * @param s pyramid series for UUID retrieval
+   * @param plane plane index for UUID retrieval
    * @return corresponding BinaryOnly OME-XML string
    */
-  private String getBinaryOnlyOMEXML(PyramidSeries s) {
+  private String getBinaryOnlyOMEXML(PyramidSeries s, int plane) {
     try {
       OMEXMLService service = getService();
       if (binaryOnly == null) {
@@ -1768,11 +1873,11 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
           companion.getName(companion.getNameCount() - 1).toString());
         binaryOnly.setBinaryOnlyUUID(companionUUID);
       }
-      binaryOnly.setUUID(s.uuid);
+      binaryOnly.setUUID(s.uuid.get(plane));
       return service.getOMEXML(binaryOnly);
     }
     catch (DependencyException | ServiceException e) {
-      LOG.warn("Could not create OME-XML for " + getSeriesPathName(s), e);
+      LOG.warn("Could not create OME-XML for " + getPathName(s, plane), e);
     }
     return null;
   }

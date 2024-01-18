@@ -98,17 +98,20 @@ public class ConversionTest {
    * @param additionalArgs CLI arguments as needed beyond "input output"
    */
   void assertTool(String...additionalArgs) throws IOException {
-    assertTool(0, additionalArgs);
+    assertTool(0, 0, additionalArgs);
   }
 
   /**
    * Run the PyramidFromDirectoryWriter main method and check for success or
    * failure.
    *
+   * @param seriesCount number of series to expect, if splitting
    * @param fileCount number of files to expect, if splitting
    * @param additionalArgs CLI arguments as needed beyond "input output"
    */
-  void assertTool(int fileCount, String...additionalArgs) throws IOException {
+  void assertTool(int seriesCount, int fileCount, String...additionalArgs)
+    throws IOException
+  {
     List<String> args = new ArrayList<String>();
     for (String arg : additionalArgs) {
       args.add(arg);
@@ -122,7 +125,7 @@ public class ConversionTest {
       if (fileCount == 0) {
         Assert.assertTrue(Files.exists(outputOmeTiff));
       }
-      else {
+      else if (seriesCount == fileCount) {
         String prefix = output.resolve("output").toString();
         for (int i=0; i<fileCount; i++) {
           Assert.assertTrue(Files.exists(
@@ -131,6 +134,14 @@ public class ConversionTest {
         Assert.assertFalse(Files.exists(
             Paths.get(prefix + "_s" +
             fileCount + ".ome.tiff")));
+      }
+      else {
+        String prefix = output.resolve("output").toString();
+        for (int i=0; i<seriesCount; i++) {
+          Assert.assertTrue(Files.exists(
+            Paths.get(prefix + "_s" + i + "_z0_c0_t0.ome.tiff")));
+        }
+        Assert.assertFalse(Files.exists(Paths.get(prefix + "_s0.ome.tiff")));
       }
     }
     catch (RuntimeException rt) {
@@ -632,7 +643,7 @@ public class ConversionTest {
     input =
       fake("plateRows", "2", "plateCols", "3", "fields", "4", "sizeC", "3");
     assertBioFormats2Raw();
-    assertTool(24, "--split");
+    assertTool(24, 24, "--split");
 
     try (ImageReader reader = new ImageReader()) {
       ServiceFactory sf = new ServiceFactory();
@@ -646,6 +657,68 @@ public class ConversionTest {
       reader.setId(output.resolve("output").toString() + ".companion.ome");
 
       Assert.assertEquals(reader.getUsedFiles().length, 25);
+      Assert.assertEquals(reader.getSeriesCount(), 24);
+      Assert.assertEquals(1, metadata.getPlateCount());
+      Assert.assertEquals(24, metadata.getImageCount());
+
+      iteratePixels(reader);
+    }
+  }
+
+  /**
+   * Test splitting planes into separate files.
+   */
+  @Test
+  public void testSplitPlanes() throws Exception {
+    input =
+      fake("plateRows", "2", "plateCols", "3", "fields", "4", "sizeC", "3");
+    assertBioFormats2Raw();
+    assertTool(24, 72, "--split-planes");
+
+    try (ImageReader reader = new ImageReader()) {
+      ServiceFactory sf = new ServiceFactory();
+      OMEXMLService xmlService = sf.getInstance(OMEXMLService.class);
+      OMEXMLMetadata metadata = xmlService.createOMEXMLMetadata();
+      reader.setMetadataStore(metadata);
+      reader.setFlattenedResolutions(false);
+
+      // --split-planes should always produce a companion OME-XML file
+      // with BinaryOnly OME-TIFFs
+      reader.setId(output.resolve("output").toString() + ".companion.ome");
+
+      Assert.assertEquals(reader.getUsedFiles().length, 73);
+      Assert.assertEquals(reader.getSeriesCount(), 24);
+      Assert.assertEquals(1, metadata.getPlateCount());
+      Assert.assertEquals(24, metadata.getImageCount());
+
+      iteratePixels(reader);
+    }
+  }
+
+  /**
+   * Test what happens when the split-by-series and split-by-plane
+   * options are used together.
+   */
+  @Test
+  public void testBothSplitOptions() throws Exception {
+    input =
+      fake("plateRows", "2", "plateCols", "3", "fields", "4", "sizeC", "3");
+    assertBioFormats2Raw();
+    // expect --split-planes to take precedence
+    assertTool(24, 72, "--split", "--split-planes");
+
+    try (ImageReader reader = new ImageReader()) {
+      ServiceFactory sf = new ServiceFactory();
+      OMEXMLService xmlService = sf.getInstance(OMEXMLService.class);
+      OMEXMLMetadata metadata = xmlService.createOMEXMLMetadata();
+      reader.setMetadataStore(metadata);
+      reader.setFlattenedResolutions(false);
+
+      // --split-planes should always produce a companion OME-XML file
+      // with BinaryOnly OME-TIFFs
+      reader.setId(output.resolve("output").toString() + ".companion.ome");
+
+      Assert.assertEquals(reader.getUsedFiles().length, 73);
       Assert.assertEquals(reader.getSeriesCount(), 24);
       Assert.assertEquals(1, metadata.getPlateCount());
       Assert.assertEquals(24, metadata.getImageCount());
