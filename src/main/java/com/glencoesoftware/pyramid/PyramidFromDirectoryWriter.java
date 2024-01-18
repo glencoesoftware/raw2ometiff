@@ -126,6 +126,7 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
   private volatile String logLevel;
   private volatile boolean progressBars = false;
   boolean printVersion = false;
+  boolean help = false;
   CompressionType compression;
   CodecOptions compressionOptions;
   boolean legacy = false;
@@ -219,7 +220,6 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
   @Option(
     names = {"-p", "--progress"},
     description = "Print progress bars during conversion",
-    help = true,
     defaultValue = "false"
   )
   public void setProgressBars(boolean useProgressBars) {
@@ -240,6 +240,21 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
   )
   public void setPrintVersionOnly(boolean versionOnly) {
     printVersion = versionOnly;
+  }
+
+  /**
+   * Configure whether to print help and exit without converting.
+   *
+   * @param helpOnly whether or not to print help and exit
+   */
+  @Option(
+    names = "--help",
+    description = "Print usage information and exit",
+    usageHelp = true,
+    defaultValue = "false"
+  )
+  public void setHelp(boolean helpOnly) {
+    help = helpOnly;
   }
 
   /**
@@ -411,6 +426,13 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
   }
 
   /**
+   * @return true if only usage info is displayed
+   */
+  public boolean getHelp() {
+    return help;
+  }
+
+  /**
    * @return compression type
    */
   public CompressionType getCompression() {
@@ -487,6 +509,10 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
   @Override
   public Void call() throws Exception {
     setupLogger();
+
+    if (help) {
+      return null;
+    }
 
     if (printVersion) {
       printVersion();
