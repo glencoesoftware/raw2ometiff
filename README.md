@@ -1,4 +1,4 @@
-[![Build status](https://ci.appveyor.com/api/projects/status/hvqqnbiwmo90m2fd?svg=true)](https://ci.appveyor.com/project/gs-jenkins/raw2ometiff)
+[![Build status](https://github.com/glencoesoftware/raw2ometiff/workflows/Gradle/badge.svg))](https://github.com/glencoesoftware/raw2ometiff/actions)
 
 raw2ometiff converter
 =====================
