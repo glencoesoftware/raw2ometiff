@@ -133,7 +133,7 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
   int maxWorkers;
   boolean rgb = false;
 
-  private List<PyramidSeries> series = new ArrayList<PyramidSeries>();
+  private List<PyramidSeries> series;
   private Map<String, TiffSaver> tiffSavers = new HashMap<String, TiffSaver>();
   boolean splitBySeries = false;
   boolean splitByPlane = false;
@@ -873,23 +873,6 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
    * @param s current series
    */
   private void findNumberOfResolutions(PyramidSeries s) throws IOException {
-    if (plateData != null) {
-      List<Map<String, Object>> wells =
-        (List<Map<String, Object>>) plateData.get("wells");
-      int index = 0;
-      for (Map<String, Object> well : wells) {
-        int fields = getSubgroupCount((String) well.get("path"));
-        if (index + fields > s.index) {
-          s.path = well.get("path") + "/" + (s.index - index);
-          break;
-        }
-        index += fields;
-      }
-    }
-    else {
-      s.path = String.valueOf(s.index);
-    }
-
     ZarrGroup seriesGroup = getZarrGroup(s.path);
     if (seriesGroup == null) {
       throw new IOException("Expected series " + s.index + " not found");
@@ -983,11 +966,42 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
       seriesCount = 1;
     }
 
+    series = new ArrayList<PyramidSeries>(seriesCount);
+    for (int s=0; s<seriesCount; s++) {
+      series.add(null);
+    }
+
+    if (plateData != null) {
+      List<Map<String, Object>> wells =
+        (List<Map<String, Object>>) plateData.get("wells");
+      int index = 0;
+      for (Map<String, Object> well : wells) {
+        int fields = getSubgroupCount((String) well.get("path"));
+        for (int f=0; f<fields; f++) {
+          PyramidSeries s = new PyramidSeries();
+          s.index = index + f;
+          s.path = well.get("path") + "/" + f;
+          series.set(s.index, s);
+        }
+        index += fields;
+      }
+    }
+    else {
+      for (int seriesIndex=0; seriesIndex<seriesCount; seriesIndex++) {
+        PyramidSeries s = new PyramidSeries();
+        s.index = seriesIndex;
+        s.path = String.valueOf(s.index);
+        series.set(s.index, s);
+      }
+    }
+
     int totalPlanes = 0;
     seriesPaths = new ArrayList<Path>(seriesCount);
     for (int seriesIndex=0; seriesIndex<seriesCount; seriesIndex++) {
-      PyramidSeries s = new PyramidSeries();
-      s.index = seriesIndex;
+      PyramidSeries s = series.get(seriesIndex);
+      if (s.index != seriesIndex) {
+        throw new IllegalArgumentException("seriesIndex = " + seriesIndex);
+      }
       findNumberOfResolutions(s);
 
       s.z = metadata.getPixelsSizeZ(seriesIndex).getNumberValue().intValue();
@@ -1124,7 +1138,6 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
         }
       }
 
-      series.add(s);
       totalPlanes += s.planeCount;
 
       if (splitBySeries && !splitByPlane) {
