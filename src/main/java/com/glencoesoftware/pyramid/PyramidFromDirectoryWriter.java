@@ -999,8 +999,11 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
 
     int seriesCount = getSeriesCount();
 
+    boolean flatHierarchy = false;
     if (seriesCount < 1) {
-      throw new FormatException("Found no images to convert.  Corrupt input?");
+      LOG.warn("Series missing from hierarchy, assuming single pyramid");
+      seriesCount = 1;
+      flatHierarchy = true;
     }
 
     if (seriesCount > 1 && legacy) {
@@ -1032,7 +1035,7 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
       for (int seriesIndex=0; seriesIndex<seriesCount; seriesIndex++) {
         PyramidSeries s = new PyramidSeries();
         s.index = seriesIndex;
-        s.path = String.valueOf(s.index);
+        s.path = flatHierarchy ? "" : String.valueOf(s.index);
         series.set(s.index, s);
       }
     }
