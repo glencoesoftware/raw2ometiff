@@ -40,8 +40,10 @@ import loci.common.services.ServiceException;
 import loci.common.services.ServiceFactory;
 import loci.formats.FormatException;
 import loci.formats.FormatTools;
+import loci.formats.ImageReader;
 import loci.formats.MetadataTools;
 import loci.formats.codec.CodecOptions;
+import loci.formats.meta.IMetadata;
 import loci.formats.ome.OMEPyramidStore;
 import loci.formats.services.OMEXMLService;
 import loci.formats.tiff.IFD;
@@ -137,6 +139,8 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
   private Map<String, TiffSaver> tiffSavers = new HashMap<String, TiffSaver>();
   boolean splitBySeries = false;
   boolean splitByPlane = false;
+
+  String imageFile = null;
 
   private ZarrGroup reader = null;
 
@@ -353,6 +357,25 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
   }
 
   /**
+   * Set an alternate file to use for obtaining OME-XML metadata
+   * If the expected "OME/METADATA.ome.xml" file is not found, then
+   * the provided file will be read using Bio-Formats.
+   * This file is expected to be an original image file, with dimensions
+   * that match the input Zarr.
+   *
+   * @param file path to image file
+   */
+  @Option(
+      names = {"--image-file", "-f"},
+      description =
+        "Image file from which read metadata, if METADATA.ome.xml not found",
+      defaultValue = ""
+  )
+  public void setImageFile(String file) {
+    imageFile = file;
+  }
+
+  /**
    * Set the maximum number of workers to use for converting tiles.
    * Defaults to 4 or the number of detected CPUs, whichever is smaller.
    *
@@ -481,6 +504,14 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
    */
   public boolean getSplitSinglePlaneTIFFs() {
     return splitByPlane;
+  }
+
+  /**
+   * @return path to image file from which metadata is read,
+   *         if METADATA.ome.xml not present
+   */
+  public String getImageFile() {
+    return imageFile;
   }
 
   /**
@@ -930,6 +961,17 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
       String xml = null;
       if (omexml != null && Files.exists(omexml)) {
         xml = DataTools.readFile(omexml.toString());
+      }
+      else if (imageFile != null && !imageFile.isEmpty()) {
+        try (ImageReader imageReader = new ImageReader()) {
+          IMetadata srcMetadata = service.createOMEXMLMetadata();
+          imageReader.setMetadataStore(srcMetadata);
+          imageReader.setId(imageFile);
+          xml = service.getOMEXML(srcMetadata);
+        }
+        catch (ServiceException e) {
+          throw new FormatException("Could not get OME-XML from image file", e);
+        }
       }
       try {
         if (xml != null) {
