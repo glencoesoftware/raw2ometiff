@@ -1035,7 +1035,19 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
       for (int seriesIndex=0; seriesIndex<seriesCount; seriesIndex++) {
         PyramidSeries s = new PyramidSeries();
         s.index = seriesIndex;
-        s.path = flatHierarchy ? "" : String.valueOf(s.index);
+        s.path = String.valueOf(s.index);
+        if (flatHierarchy) {
+          try {
+            // if we're skipping the series in the hierarchy,
+            // check that there is actually an array at the resolution level
+            ZarrArray.open(inputDirectory.resolve("0"));
+            s.path = "";
+          }
+          catch (IOException e) {
+            throw new FormatException(
+              "Could not handle series index " + s.index + ". Corrupt input?");
+          }
+        }
         series.set(s.index, s);
       }
     }
