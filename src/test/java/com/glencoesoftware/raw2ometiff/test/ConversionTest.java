@@ -834,6 +834,37 @@ public class ConversionTest {
       new PyramidFromDirectoryWriter(), new String[] {"--version"});
   }
 
+  /**
+   * Test conversion of a single multiscales, similar to a label image.
+   */
+  @Test
+  public void testLabelImage() throws Exception {
+    input = fake("sizeX", "2000", "sizeY", "1500");
+    assertBioFormats2Raw();
+    output = output.resolve("0");
+    assertTool("-f", input.toString());
+    iteratePixels();
+  }
+
+  /**
+   * Test conversion of a single multiscales (similar to label image),
+   * but intentionally provide incorrect image metadata.
+   */
+  @Test
+  public void testLabelImageWrongSize() throws Exception {
+    input = fake("sizeX", "2000", "sizeY", "1500");
+    assertBioFormats2Raw();
+    output = output.resolve("0");
+    try {
+      assertTool("-f", "test.fake");
+    }
+    catch (ExecutionException e) {
+      // First cause is RuntimeException wrapping the checked FormatException
+      Assert.assertEquals(
+          FormatException.class, e.getCause().getCause().getClass());
+    }
+  }
+
   private void checkRGBIFDs() throws FormatException, IOException {
     try (TiffParser parser = new TiffParser(outputOmeTiff.toString())) {
       IFDList mainIFDs = parser.getMainIFDs();
