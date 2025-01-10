@@ -1061,9 +1061,26 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
       }
       findNumberOfResolutions(s);
 
+      int x = metadata.getPixelsSizeX(seriesIndex).getNumberValue().intValue();
+      int y = metadata.getPixelsSizeY(seriesIndex).getNumberValue().intValue();
+
       s.z = metadata.getPixelsSizeZ(seriesIndex).getNumberValue().intValue();
       s.c = metadata.getPixelsSizeC(seriesIndex).getNumberValue().intValue();
       s.t = metadata.getPixelsSizeT(seriesIndex).getNumberValue().intValue();
+
+      // make sure that OME-XML and first resolution array have same dimensions
+      ZarrGroup imgGroup = getZarrGroup(s.path);
+      ZarrArray imgArray = imgGroup.openArray("0");
+      int[] dims = imgArray.getShape();
+      int[] metadataDims = new int[] {s.t, s.c, s.z, y, x};
+      for (int d=0; d<dims.length; d++) {
+        if (dims[d] != metadataDims[d]) {
+          throw new FormatException("Dimension mismatch: " +
+            ("TZCYX".charAt(d)) + ": Zarr (" + dims[d] + "), OME-XML: (" +
+            metadataDims[d] + ")");
+        }
+      }
+
       s.dimensionOrder =
         metadata.getPixelsDimensionOrder(seriesIndex).toString();
       s.planeCount = s.z * s.t;
