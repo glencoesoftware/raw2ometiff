@@ -1076,7 +1076,7 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
       for (int d=0; d<dims.length; d++) {
         if (dims[d] != metadataDims[d]) {
           throw new FormatException("Dimension mismatch: " +
-            ("TZCYX".charAt(d)) + ": Zarr (" + dims[d] + "), OME-XML: (" +
+            ("TCZYX".charAt(d)) + ": Zarr (" + dims[d] + "), OME-XML: (" +
             metadataDims[d] + ")");
         }
       }
