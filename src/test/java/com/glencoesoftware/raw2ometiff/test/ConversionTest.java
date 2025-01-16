@@ -352,7 +352,9 @@ public class ConversionTest {
       // First cause is RuntimeException wrapping the checked FormatException
       Assert.assertEquals(
           FormatException.class, e.getCause().getCause().getClass());
+      return;
     }
+    Assert.fail("Did not throw exception on invalid data");
   }
 
   /**
@@ -862,7 +864,59 @@ public class ConversionTest {
       // First cause is RuntimeException wrapping the checked FormatException
       Assert.assertEquals(
           FormatException.class, e.getCause().getCause().getClass());
+      return;
     }
+    Assert.fail("Did not throw exception on invalid data");
+  }
+
+  /**
+   * Test conversion of single multiscales (label image), where the provided
+   * metadata has more channels than the Zarr.
+   */
+  @Test
+  public void testLabelImageExtraMetadataChannels() throws Exception {
+    input = fake("sizeX", "2000", "sizeY", "1500");
+    assertBioFormats2Raw();
+    output = output.resolve("0");
+
+    Path metadata = fake("sizeX", "2000", "sizeY", "1500", "sizeC", "3");
+    assertTool("-f", metadata.toString());
+    iteratePixels();
+  }
+
+  /**
+   * Test conversion of single multiscales (label image), where the provided
+   * metadata has fewer channels than the Zarr.
+   * Extra channels should be inserted into the metadata.
+   */
+  @Test
+  public void testLabelImageNotEnoughMetadataChannels() throws Exception {
+    input = fake("sizeX", "2000", "sizeY", "1500", "sizeC", "3");
+    assertBioFormats2Raw();
+    output = output.resolve("0");
+
+    Path metadata = fake("sizeX", "2000", "sizeY", "1500", "sizeC", "1");
+    assertTool("-f", metadata.toString());
+    iteratePixels();
+  }
+
+  /**
+   * Test conversion of single multiscales (label image), where the provided
+   * metadata has different pixel type and endianness compared to the Zarr.
+   * Pixel type and endianness should be inherited from the Zarr,
+   * otherwise the output data is likely to be incorrect.
+   */
+  @Test
+  public void testLabelImagePixelTypeMismatch() throws Exception {
+    input = fake("sizeX", "2000", "sizeY", "1500",
+      "pixelType", "uint16", "little", "true");
+    assertBioFormats2Raw();
+    output = output.resolve("0");
+
+    Path metadata = fake("sizeX", "2000", "sizeY", "1500",
+      "pixelType", "uint8", "little", "false");
+    assertTool("-f", metadata.toString());
+    iteratePixels();
   }
 
   private void checkRGBIFDs() throws FormatException, IOException {

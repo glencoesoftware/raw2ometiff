@@ -38,9 +38,9 @@ import loci.common.Region;
 import loci.common.services.DependencyException;
 import loci.common.services.ServiceException;
 import loci.common.services.ServiceFactory;
+import loci.formats.ChannelSeparator;
 import loci.formats.FormatException;
 import loci.formats.FormatTools;
-import loci.formats.ImageReader;
 import loci.formats.MetadataTools;
 import loci.formats.codec.CodecOptions;
 import loci.formats.meta.IMetadata;
@@ -963,7 +963,7 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
         xml = DataTools.readFile(omexml.toString());
       }
       else if (imageFile != null && !imageFile.isEmpty()) {
-        try (ImageReader imageReader = new ImageReader()) {
+        try (ChannelSeparator imageReader = new ChannelSeparator()) {
           IMetadata srcMetadata = service.createOMEXMLMetadata();
           imageReader.setMetadataStore(srcMetadata);
           imageReader.setId(imageFile);
@@ -1072,7 +1072,8 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
       ZarrGroup imgGroup = getZarrGroup(s.path);
       ZarrArray imgArray = imgGroup.openArray("0");
       int[] dims = imgArray.getShape();
-      int[] metadataDims = new int[] {s.t, s.c, s.z, y, x};
+      // allow mismatch in channel count...
+      int[] metadataDims = new int[] {s.t, dims[1], s.z, y, x};
       for (int d=0; d<dims.length; d++) {
         if (dims[d] != metadataDims[d]) {
           throw new FormatException("Dimension mismatch: " +
@@ -1080,16 +1081,39 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
             metadataDims[d] + ")");
         }
       }
+      // ...but if the channel count mismatches, metadata needs to be corrected
+      if (s.c > dims[1]) {
+        mergeChannels(seriesIndex, s.c, false);
+        s.c = dims[1];
+      }
+      else if (s.c < dims[1]) {
+        for (int channel=s.c; channel<dims[1]; channel++) {
+          metadata.setChannelID(
+            MetadataTools.createLSID("Channel", seriesIndex, channel),
+            seriesIndex, channel);
+        }
+        metadata.setPixelsSizeC(new PositiveInteger(dims[1]), seriesIndex);
+        s.c = dims[1];
+      }
 
       s.dimensionOrder =
         metadata.getPixelsDimensionOrder(seriesIndex).toString();
       s.planeCount = s.z * s.t;
 
       // Zarr format allows both little and big endian order
-      s.littleEndian = !metadata.getPixelsBigEndian(seriesIndex);
+      boolean bigEndian = imgArray.getByteOrder() == ByteOrder.BIG_ENDIAN;
+      s.littleEndian = !bigEndian;
+      metadata.setPixelsBigEndian(bigEndian, seriesIndex);
 
-      s.pixelType = FormatTools.pixelTypeFromString(
-            metadata.getPixelsType(seriesIndex).getValue());
+      // make sure pixel types are consistent between Zarr and OME metadata
+      PixelType type = getPixelType(imgArray.getDataType());
+      s.pixelType = FormatTools.pixelTypeFromString(type.getValue());
+      if (type != metadata.getPixelsType(seriesIndex)) {
+        metadata.setPixelsType(type, seriesIndex);
+        int bits = FormatTools.getBytesPerPixel(s.pixelType) * 8;
+        metadata.setPixelsSignificantBits(
+          new PositiveInteger(bits), seriesIndex);
+      }
 
       if (seriesIndex > 0 && s.littleEndian != series.get(0).littleEndian) {
         // always warn on endian mismatches
@@ -1121,48 +1145,7 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
         LOG.debug("Merging {} original channels into {} RGB channels",
           s.c, effectiveChannels);
 
-        OMEXMLMetadataRoot root = (OMEXMLMetadataRoot) metadata.getRoot();
-        Pixels pixels = root.getImage(seriesIndex).getPixels();
-        for (int index=pixels.sizeOfChannelList()-1; index>0; index--) {
-          if (index % rgbChannels == 0) {
-            continue;
-          }
-          Channel ch = pixels.getChannel(index);
-          pixels.removeChannel(ch);
-        }
-        for (int index=0; index<pixels.sizeOfChannelList(); index++) {
-          Channel channel = pixels.getChannel(index);
-          channel.setSamplesPerPixel(new PositiveInteger(rgbChannels));
-          if (channel.getColor() != null) {
-            LOG.warn("Removing channel color");
-            channel.setColor(null);
-          }
-          if (channel.getEmissionWavelength() != null) {
-            LOG.warn("Removing channel emission wavelength");
-            channel.setEmissionWavelength(null);
-          }
-          if (channel.getExcitationWavelength() != null) {
-            LOG.warn("Removing channel excitation wavelength");
-            channel.setEmissionWavelength(null);
-          }
-          if (channel.getLightPath() != null) {
-            LOG.warn("Removing channel light path");
-            channel.setLightPath(null);
-          }
-          if (channel.getLightSourceSettings() != null) {
-            LOG.warn("Removing channel light source settings");
-            channel.setLightSourceSettings(null);
-          }
-          FilterSet filterSet = channel.getLinkedFilterSet();
-          if (filterSet != null) {
-            LOG.warn("Removing channel filter set");
-            channel.unlinkFilterSet(filterSet);
-          }
-          if (channel.getName() != null) {
-            LOG.warn("Removing channel name");
-            channel.setName(null);
-          }
-        }
+        mergeChannels(seriesIndex, rgbChannels, true);
 
         // RGB data needs to have XYC* dimension order
         if (!s.dimensionOrder.startsWith("XYC")) {
@@ -1988,6 +1971,55 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
       parseJSONValues(json, originalMeta, "");
 
       service.populateOriginalMetadata(metadata, originalMeta);
+    }
+  }
+
+  private void mergeChannels(
+    int seriesIndex, int rgbChannels, boolean setSamples)
+  {
+    OMEXMLMetadataRoot root = (OMEXMLMetadataRoot) metadata.getRoot();
+    Pixels pixels = root.getImage(seriesIndex).getPixels();
+    for (int index=pixels.sizeOfChannelList()-1; index>0; index--) {
+      if (index % rgbChannels == 0) {
+        continue;
+      }
+      Channel ch = pixels.getChannel(index);
+      pixels.removeChannel(ch);
+    }
+    for (int index=0; index<pixels.sizeOfChannelList(); index++) {
+      Channel channel = pixels.getChannel(index);
+      if (setSamples) {
+        channel.setSamplesPerPixel(new PositiveInteger(rgbChannels));
+      }
+      if (channel.getColor() != null) {
+        LOG.warn("Removing channel color");
+        channel.setColor(null);
+      }
+      if (channel.getEmissionWavelength() != null) {
+        LOG.warn("Removing channel emission wavelength");
+        channel.setEmissionWavelength(null);
+      }
+      if (channel.getExcitationWavelength() != null) {
+        LOG.warn("Removing channel excitation wavelength");
+        channel.setEmissionWavelength(null);
+      }
+      if (channel.getLightPath() != null) {
+        LOG.warn("Removing channel light path");
+        channel.setLightPath(null);
+      }
+      if (channel.getLightSourceSettings() != null) {
+        LOG.warn("Removing channel light source settings");
+        channel.setLightSourceSettings(null);
+      }
+      FilterSet filterSet = channel.getLinkedFilterSet();
+      if (filterSet != null) {
+        LOG.warn("Removing channel filter set");
+        channel.unlinkFilterSet(filterSet);
+      }
+      if (channel.getName() != null) {
+        LOG.warn("Removing channel name");
+        channel.setName(null);
+      }
     }
   }
 
