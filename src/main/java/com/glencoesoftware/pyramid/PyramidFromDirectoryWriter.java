@@ -965,6 +965,7 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
       else if (imageFile != null && !imageFile.isEmpty()) {
         try (ChannelSeparator imageReader = new ChannelSeparator()) {
           IMetadata srcMetadata = service.createOMEXMLMetadata();
+          imageReader.setFlattenedResolutions(false);
           imageReader.setMetadataStore(srcMetadata);
           imageReader.setId(imageFile);
           xml = service.getOMEXML(srcMetadata);
