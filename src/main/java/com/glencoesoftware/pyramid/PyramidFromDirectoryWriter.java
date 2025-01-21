@@ -360,7 +360,7 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
    * Set an alternate file to use for obtaining OME-XML metadata
    * If the expected "OME/METADATA.ome.xml" file is not found, then
    * the provided file will be read using Bio-Formats.
-   * This file is expected to be an original image file, with dimensions
+   * This file is expected to be an original image file, with XYZT dimensions
    * that match the input Zarr.
    *
    * @param file path to image file
