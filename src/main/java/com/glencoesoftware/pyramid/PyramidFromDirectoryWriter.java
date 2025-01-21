@@ -1084,10 +1084,15 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
       }
       // ...but if the channel count mismatches, metadata needs to be corrected
       if (s.c > dims[1]) {
+        LOG.debug("OME-XML has {} channels; using {} Zarr channels instead",
+          s.c, dims[1]);
         mergeChannels(seriesIndex, s.c, false);
         s.c = dims[1];
       }
       else if (s.c < dims[1]) {
+        LOG.debug(
+          "OME-XML has {} channels; adding {} to match {} Zarr channels",
+          s.c, dims[1] - s.c + 1, dims[1]);
         for (int channel=s.c; channel<dims[1]; channel++) {
           metadata.setChannelID(
             MetadataTools.createLSID("Channel", seriesIndex, channel),
@@ -1104,12 +1109,16 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
       // Zarr format allows both little and big endian order
       boolean bigEndian = imgArray.getByteOrder() == ByteOrder.BIG_ENDIAN;
       s.littleEndian = !bigEndian;
-      metadata.setPixelsBigEndian(bigEndian, seriesIndex);
+      if (bigEndian != metadata.getPixelsBigEndian(seriesIndex)) {
+        LOG.debug("Setting BigEndian={} for series {}", bigEndian, seriesIndex);
+        metadata.setPixelsBigEndian(bigEndian, seriesIndex);
+      }
 
       // make sure pixel types are consistent between Zarr and OME metadata
       PixelType type = getPixelType(imgArray.getDataType());
       s.pixelType = FormatTools.pixelTypeFromString(type.getValue());
       if (type != metadata.getPixelsType(seriesIndex)) {
+        LOG.debug("Setting PixelsType = {} for series {}", type, seriesIndex);
         metadata.setPixelsType(type, seriesIndex);
         int bits = FormatTools.getBytesPerPixel(s.pixelType) * 8;
         metadata.setPixelsSignificantBits(
