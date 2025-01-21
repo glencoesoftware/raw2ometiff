@@ -477,12 +477,8 @@ public class ConversionTest {
       Assert.assertEquals(
           3, metadata.getPixelsSizeC(0).getNumberValue());
       Assert.assertEquals(1, metadata.getChannelCount(0));
-      Assert.assertEquals(
-          3, metadata.getChannelSamplesPerPixel(0, 0).getNumberValue());
-      Assert.assertNull(metadata.getChannelColor(0, 0));
-      Assert.assertNull(metadata.getChannelEmissionWavelength(0, 0));
-      Assert.assertNull(metadata.getChannelExcitationWavelength(0, 0));
-      Assert.assertNull(metadata.getChannelName(0, 0));
+
+      checkRGBChannel(metadata, 0, 0);
     }
     checkRGBIFDs();
   }
@@ -506,30 +502,10 @@ public class ConversionTest {
       Assert.assertEquals(
           12, metadata.getPixelsSizeC(0).getNumberValue());
       Assert.assertEquals(4, metadata.getChannelCount(0));
-      Assert.assertEquals(
-          3, metadata.getChannelSamplesPerPixel(0, 0).getNumberValue());
-      Assert.assertNull(metadata.getChannelColor(0, 0));
-      Assert.assertNull(metadata.getChannelEmissionWavelength(0, 0));
-      Assert.assertNull(metadata.getChannelExcitationWavelength(0, 0));
-      Assert.assertNull(metadata.getChannelName(0, 0));
-      Assert.assertEquals(
-        3, metadata.getChannelSamplesPerPixel(0, 1).getNumberValue());
-      Assert.assertNull(metadata.getChannelColor(0, 1));
-      Assert.assertNull(metadata.getChannelEmissionWavelength(0, 1));
-      Assert.assertNull(metadata.getChannelExcitationWavelength(0, 1));
-      Assert.assertNull(metadata.getChannelName(0, 1));
-      Assert.assertEquals(
-        3, metadata.getChannelSamplesPerPixel(0, 2).getNumberValue());
-      Assert.assertNull(metadata.getChannelColor(0, 2));
-      Assert.assertNull(metadata.getChannelEmissionWavelength(0, 2));
-      Assert.assertNull(metadata.getChannelExcitationWavelength(0, 2));
-      Assert.assertNull(metadata.getChannelName(0, 2));
-      Assert.assertEquals(
-        3, metadata.getChannelSamplesPerPixel(0, 3).getNumberValue());
-      Assert.assertNull(metadata.getChannelColor(0, 3));
-      Assert.assertNull(metadata.getChannelEmissionWavelength(0, 3));
-      Assert.assertNull(metadata.getChannelExcitationWavelength(0, 3));
-      Assert.assertNull(metadata.getChannelName(0, 3));
+
+      for (int c=0; c<metadata.getChannelCount(0); c++) {
+        checkRGBChannel(metadata, 0, c);
+      }
     }
     checkRGBIFDs();
   }
@@ -562,12 +538,7 @@ public class ConversionTest {
       Assert.assertEquals(
           3, metadata.getPixelsSizeC(0).getNumberValue());
       Assert.assertEquals(1, metadata.getChannelCount(0));
-      Assert.assertEquals(
-          3, metadata.getChannelSamplesPerPixel(0, 0).getNumberValue());
-      Assert.assertNull(metadata.getChannelColor(0, 0));
-      Assert.assertNull(metadata.getChannelEmissionWavelength(0, 0));
-      Assert.assertNull(metadata.getChannelExcitationWavelength(0, 0));
-      Assert.assertNull(metadata.getChannelName(0, 0));
+      checkRGBChannel(metadata, 0, 0);
     }
     checkRGBIFDs();
   }
@@ -956,6 +927,59 @@ public class ConversionTest {
     iteratePixels();
   }
 
+  /**
+   * Test conversion of single multiscales (label image) with 3 channels
+   * and RGB output.
+   */
+  @Test
+  public void testRGBLabelImage() throws Exception {
+    input = fake("sizeC", "3", "rgb", "3");
+    assertBioFormats2Raw();
+    output = output.resolve("0");
+    assertTool("--rgb", "-f", input.toString());
+    iteratePixels();
+    try (ImageReader reader = new ImageReader()) {
+      ServiceFactory sf = new ServiceFactory();
+      OMEXMLService xmlService = sf.getInstance(OMEXMLService.class);
+      OMEXMLMetadata metadata = xmlService.createOMEXMLMetadata();
+      reader.setMetadataStore(metadata);
+      reader.setFlattenedResolutions(false);
+      reader.setId(outputOmeTiff.toString());
+      Assert.assertEquals(
+          3, metadata.getPixelsSizeC(0).getNumberValue());
+      Assert.assertEquals(1, metadata.getChannelCount(0));
+      checkRGBChannel(metadata, 0, 0);
+    }
+    checkRGBIFDs();
+  }
+
+  /**
+   * Test conversion of single multiscales (label image) with 3 channels
+   * and RGB output, and mismatching input channel counts.
+   */
+  @Test
+  public void testRGBLabelImageDifferentC() throws Exception {
+    input = fake("sizeC", "3", "rgb", "3");
+    assertBioFormats2Raw();
+    output = output.resolve("0");
+    assertTool("--rgb", "-f", fake("sizeC", "4").toString());
+    iteratePixels();
+    try (ImageReader reader = new ImageReader()) {
+      ServiceFactory sf = new ServiceFactory();
+      OMEXMLService xmlService = sf.getInstance(OMEXMLService.class);
+      OMEXMLMetadata metadata = xmlService.createOMEXMLMetadata();
+      reader.setMetadataStore(metadata);
+      reader.setFlattenedResolutions(false);
+      reader.setId(outputOmeTiff.toString());
+      Assert.assertEquals(
+          3, metadata.getPixelsSizeC(0).getNumberValue());
+      Assert.assertEquals(1, metadata.getChannelCount(0));
+
+      checkRGBChannel(metadata, 0, 0);
+    }
+    checkRGBIFDs();
+  }
+
   private void checkRGBIFDs() throws FormatException, IOException {
     try (TiffParser parser = new TiffParser(outputOmeTiff.toString())) {
       IFDList mainIFDs = parser.getMainIFDs();
@@ -970,6 +994,15 @@ public class ConversionTest {
         }
       }
     }
+  }
+
+  private void checkRGBChannel(OMEXMLMetadata metadata, int image, int c) {
+    Assert.assertEquals(
+        3, metadata.getChannelSamplesPerPixel(image, c).getNumberValue());
+    Assert.assertNull(metadata.getChannelColor(image, c));
+    Assert.assertNull(metadata.getChannelEmissionWavelength(image, c));
+    Assert.assertNull(metadata.getChannelExcitationWavelength(image, c));
+    Assert.assertNull(metadata.getChannelName(image, c));
   }
 
   /**
