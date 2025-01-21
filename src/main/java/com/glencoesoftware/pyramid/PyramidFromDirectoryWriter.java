@@ -1069,17 +1069,62 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
       s.c = metadata.getPixelsSizeC(seriesIndex).getNumberValue().intValue();
       s.t = metadata.getPixelsSizeT(seriesIndex).getNumberValue().intValue();
 
+      // trust the OME-XML dimension order if it's coming from
+      // OME/METADATA.ome.xml, as that implies that it can be trusted to match
+      // the Zarr dimension order -  usually it will be the default XYZCT anyway
+      //
+      // don't trust the OME-XML dimension order if an external file is
+      // providing the OME-XML metadata (e.g. label image)
+      // this only makes a real difference if the Zarr has multiple planes,
+      // but protects against e.g. RGB input data with an XYCZT order vs.
+      // Zarr data with an XYZCT order
+      if (getImageFile() == null) {
+        s.dimensionOrder =
+          metadata.getPixelsDimensionOrder(seriesIndex).toString();
+        LOG.debug("No image file; set dimension order to {}",
+          s.dimensionOrder);
+      }
+      else {
+        s.dimensionOrder = "XYZCT";
+        LOG.debug("Image file has dimension order {}; using default {}",
+          metadata.getPixelsDimensionOrder(seriesIndex), s.dimensionOrder);
+      }
+
+      s.dimensionLengths[s.dimensionOrder.indexOf("Z") - 2] = s.z;
+      s.dimensionLengths[s.dimensionOrder.indexOf("T") - 2] = s.t;
+      s.dimensionLengths[s.dimensionOrder.indexOf("C") - 2] = s.c;
+
       // make sure that OME-XML and first resolution array have same dimensions
       ZarrGroup imgGroup = getZarrGroup(s.path);
       ZarrArray imgArray = imgGroup.openArray("0");
       int[] dims = imgArray.getShape();
       // allow mismatch in channel count...
-      int[] metadataDims = new int[] {s.t, dims[1], s.z, y, x};
       for (int d=0; d<dims.length; d++) {
-        if (dims[d] != metadataDims[d]) {
+        char dimension = s.dimensionOrder.charAt(dims.length - d - 1);
+        int check = 0;
+        switch (dimension) {
+          case 'X':
+            check = x;
+            break;
+          case 'Y':
+            check = y;
+            break;
+          case 'Z':
+            check = s.z;
+            break;
+          case 'C':
+            check = dims[1];
+            break;
+          case 'T':
+            check = s.t;
+            break;
+          default:
+            throw new FormatException("Unrecognized dimension: " + dimension);
+        }
+        if (dims[d] != check) {
           throw new FormatException("Dimension mismatch: " +
-            ("TCZYX".charAt(d)) + ": Zarr (" + dims[d] + "), OME-XML: (" +
-            metadataDims[d] + ")");
+            dimension + ": Zarr (" + dims[d] + "), OME-XML: (" +
+            check + ")");
         }
       }
       // ...but if the channel count mismatches, metadata needs to be corrected
@@ -1102,8 +1147,7 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
         s.c = dims[1];
       }
 
-      s.dimensionOrder =
-        metadata.getPixelsDimensionOrder(seriesIndex).toString();
+      s.dimensionLengths[s.dimensionOrder.indexOf("C") - 2] = s.c;
       s.planeCount = s.z * s.t;
 
       // Zarr format allows both little and big endian order
@@ -1135,10 +1179,6 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
         }
         LOG.warn(msg);
       }
-
-      s.dimensionLengths[s.dimensionOrder.indexOf("Z") - 2] = s.z;
-      s.dimensionLengths[s.dimensionOrder.indexOf("T") - 2] = s.t;
-      s.dimensionLengths[s.dimensionOrder.indexOf("C") - 2] = s.c;
 
       int rgbChannels = 1;
       int effectiveChannels = s.c;
