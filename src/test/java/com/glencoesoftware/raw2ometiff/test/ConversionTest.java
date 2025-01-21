@@ -349,9 +349,7 @@ public class ConversionTest {
       assertTool();
     }
     catch (ExecutionException e) {
-      // First cause is RuntimeException wrapping the checked FormatException
-      Assert.assertEquals(
-          FormatException.class, e.getCause().getCause().getClass());
+      testException(FormatException.class, e);
       return;
     }
     Assert.fail("Did not throw exception on invalid data");
@@ -850,7 +848,8 @@ public class ConversionTest {
 
   /**
    * Test conversion of a single multiscales (similar to label image),
-   * but intentionally provide incorrect image metadata.
+   * but intentionally provide incorrect XY metadata.
+   * Conversion is expected to fail in this case.
    */
   @Test
   public void testLabelImageWrongSize() throws Exception {
@@ -861,9 +860,47 @@ public class ConversionTest {
       assertTool("-f", "test.fake");
     }
     catch (ExecutionException e) {
-      // First cause is RuntimeException wrapping the checked FormatException
-      Assert.assertEquals(
-          FormatException.class, e.getCause().getCause().getClass());
+      testException(FormatException.class, e);
+      return;
+    }
+    Assert.fail("Did not throw exception on invalid data");
+  }
+
+  /**
+   * Test conversion of a single multiscales (similar to label image),
+   * but intentionally provide incorrect T metadata.
+   * Conversion is expected to fail in this case.
+   */
+  @Test
+  public void testLabelImageWrongT() throws Exception {
+    input = fake();
+    assertBioFormats2Raw();
+    output = output.resolve("0");
+    try {
+      assertTool("-f", fake("sizeT", "5").toString());
+    }
+    catch (ExecutionException e) {
+      testException(FormatException.class, e);
+      return;
+    }
+    Assert.fail("Did not throw exception on invalid data");
+  }
+
+  /**
+   * Test conversion of a single multiscales (similar to label image),
+   * but intentionally provide incorrect Z metadata.
+   * Conversion is expected to fail in this case.
+   */
+  @Test
+  public void testLabelImageWrongZ() throws Exception {
+    input = fake();
+    assertBioFormats2Raw();
+    output = output.resolve("0");
+    try {
+      assertTool("-f", fake("sizeZ", "4").toString());
+    }
+    catch (ExecutionException e) {
+      testException(FormatException.class, e);
       return;
     }
     Assert.fail("Did not throw exception on invalid data");
@@ -933,6 +970,18 @@ public class ConversionTest {
         }
       }
     }
+  }
+
+  /**
+   * Check that the underlying cause of an exception matches the given class.
+   * This is used to check that e.g. RuntimeException wraps an underlying
+   * FormatException as expected.
+   *
+   * @param cause Class of expected underlying exception
+   * @param e exception that was thrown
+   */
+  private void testException(Class cause, Exception e) {
+    Assert.assertEquals(cause, e.getCause().getCause().getClass());
   }
 
 }
