@@ -76,9 +76,22 @@ or generate a 5.9.x-compatible pyramid:
 
 The input tile directory must contain a full pyramid in a Zarr container.
 
+If the `--rgb` option is set, the data will be stored in the OME-TIFF using
+the [chunky format](https://www.awaresystems.be/imaging/tiff/tifftags/planarconfiguration.html)
+and the [RGB color space](https://www.awaresystems.be/imaging/tiff/tifftags/photometricinterpretation.html).
+This option is strongly recommended when the input data is a brightfield whole slide.
+
+Tile compression is performed in parallel.  The number of workers can be changed using the `--max_workers` option.
+
+`axes` and `transformations` metadata in the input Zarr will be ignored. This metadata is assumed to be consistent
+with the corresponding `PhysicalSize*`, `TimeIncrement`, and `DimensionOrder` values in the input `METADATA.ome.xml`.
+
+Compression type and quality
+============================
+
 The compression can be changed using the `--compression` option.
 Valid compression types are `Uncompressed`, `LZW`, `JPEG-2000`, `JPEG-2000 Lossy`, `JPEG`, and `zlib`.
-By default, `LZW` compression will be used in the OME-TIFF file.
+By default, `LZW` compression will be used in the OME-TIFF file, as this is a lossless compression type.
 
 If the `--compression` option is set to `JPEG-2000 Lossy`, then
 the `--quality` option can be used to control encoded bitrate in bits per pixel.
@@ -89,14 +102,9 @@ To see truly lossy compression, the quality should be set to less than the bit d
 We recommend experimenting with different quality values between 0.25 and the bit depth of the input image to find an acceptable tradeoff
 between file size and visual appeal of the converted images.
 
-If the `--rgb` option is set, the data will be stored in the OME-TIFF using
-the [chunky format](https://www.awaresystems.be/imaging/tiff/tifftags/planarconfiguration.html)
-and the [RGB color space](https://www.awaresystems.be/imaging/tiff/tifftags/photometricinterpretation.html).
-
-Tile compression is performed in parallel.  The number of workers can be changed using the `--max_workers` option.
-
-`axes` and `transformations` metadata in the input Zarr will be ignored. This metadata is assumed to be consistent
-with the corresponding `PhysicalSize*`, `TimeIncrement`, and `DimensionOrder` values in the input `METADATA.ome.xml`.
+If the `--compression` option is set to `JPEG`, then
+the `--quality` option controls the compression quality on a scale from `0.25` (25%, extremely lossy)
+to `1.0` (100%, nearly lossless). The default value is `0.75`.
 
 License
 =======
