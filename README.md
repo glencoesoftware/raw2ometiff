@@ -77,8 +77,9 @@ or generate a 5.9.x-compatible pyramid:
 The input tile directory must contain a full pyramid in a Zarr container.
 
 If the `--rgb` option is set, the data will be stored in the OME-TIFF using
-the [chunky format](https://www.awaresystems.be/imaging/tiff/tifftags/planarconfiguration.html)
-and the [RGB color space](https://www.awaresystems.be/imaging/tiff/tifftags/photometricinterpretation.html).
+the [chunky format](https://web.archive.org/web/20240528191227/https://www.awaresystems.be/imaging/tiff/tifftags/planarconfiguration.html)
+and the [RGB color space](https://web.archive.org/web/20240708194342/https://www.awaresystems.be/imaging/tiff/tifftags/photometricinterpretation.html),
+as further described in the [TIFF specification](https://www.itu.int/itudoc/itu-t/com16/tiff-fx/docs/tiff6.pdf).
 This option is strongly recommended when the input data is a brightfield whole slide.
 
 Tile compression is performed in parallel.  The number of workers can be changed using the `--max_workers` option.
