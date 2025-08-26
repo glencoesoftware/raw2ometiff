@@ -10,6 +10,7 @@ package com.glencoesoftware.pyramid;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import loci.formats.FormatException;
 import loci.formats.FormatTools;
 import loci.formats.ome.OMEPyramidStore;
@@ -65,20 +66,46 @@ public class PyramidSeries {
     throws FormatException, IOException
   {
     LOG.info("Number of resolution levels: {}", numberOfResolutions);
+
+    List<Map<String, Object>> multiscales =
+      (List<Map<String, Object>>) reader.openSubGroup(path).getAttributes().get(
+      "multiscales");
+    Map<String, Object> multiscale = multiscales.get(0);
+    List<Map<String, Object>> axes = null;
+    if (multiscales != null) {
+      axes = (List<Map<String, Object>>) multiscale.get("axes");
+    }
+
     resolutions = new ArrayList<ResolutionDescriptor>();
     for (int resolution = 0; resolution < numberOfResolutions; resolution++) {
       ResolutionDescriptor descriptor = new ResolutionDescriptor();
       descriptor.resolutionNumber = resolution;
       descriptor.path = path + "/" + resolution;
 
+      if (axes != null) {
+        for (Map<String, Object> axis : axes) {
+          descriptor.addAxis(axis.get("name").toString());
+        }
+      }
+      else {
+        descriptor.addAxis("T");
+        descriptor.addAxis("C");
+        descriptor.addAxis("Z");
+        descriptor.addAxis("Y");
+        descriptor.addAxis("X");
+      }
+
       ZarrArray array = reader.openArray(descriptor.path);
       int[] dimensions = array.getShape();
       int[] blockSizes = array.getChunks();
 
-      descriptor.sizeX = dimensions[dimensions.length - 1];
-      descriptor.sizeY = dimensions[dimensions.length - 2];
-      descriptor.tileSizeX = blockSizes[blockSizes.length - 1];
-      descriptor.tileSizeY = blockSizes[blockSizes.length - 2];
+      int xIndex = descriptor.getIndex("X");
+      int yIndex = descriptor.getIndex("Y");
+
+      descriptor.sizeX = dimensions[xIndex];
+      descriptor.sizeY = dimensions[yIndex];
+      descriptor.tileSizeX = blockSizes[xIndex];
+      descriptor.tileSizeY = blockSizes[yIndex];
 
       if (descriptor.tileSizeX % 16 != 0) {
         LOG.debug("Tile width ({}) not a multiple of 16; correcting",
@@ -116,15 +143,32 @@ public class PyramidSeries {
           }
         }
 
-        if (dimensions.length != 5) {
-          throw new FormatException(String.format(
-            "Expected 5 dimensions in series %d, found %d",
-            index, dimensions.length));
-        }
-        for (int i=0; i<dimensions.length-2; i++) {
-          if (dimensions[i] != dimensionLengths[2 - i]) {
-            throw new FormatException(
-              "Dimension order mismatch in series " + index);
+        for (int i=0; i<dimensionLengths.length; i++) {
+          // dimensionLengths is in ZCT order, independent of dimensionOrder
+          // the two orders may be different if the --rgb flag was used
+          String axis = "ZCT".substring(i, i + 1);
+          int axisIndex = descriptor.getIndex(axis);
+          LOG.debug("Checking axis {} with index {}, position {}",
+            axis, axisIndex, i);
+
+          if (axisIndex < 0 && dimensionLengths[i] > 1) {
+            throw new FormatException(axis + " axis expected but not defined");
+          }
+          else if (axisIndex >= 0 &&
+            dimensions[axisIndex] != dimensionLengths[i])
+          {
+            // a mismatch on C is usually OK (due to --rgb flag),
+            // but log it anyway
+            // a mismatch anywhere else is a problem
+            if (axis.equalsIgnoreCase("c")) {
+              LOG.debug("Mismatch on dimension {}; expected {} got {}",
+                axis, dimensions[axisIndex], dimensionLengths[i]);
+            }
+            else {
+              throw new FormatException(
+                "Mismatch on dimension " + axis + "; expected " +
+                dimensions[axisIndex] + ", got " + dimensionLengths[i]);
+            }
           }
         }
       }
