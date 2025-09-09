@@ -55,6 +55,71 @@ public class PyramidSeries {
   /** Description of each resolution in the pyramid. */
   List<ResolutionDescriptor> resolutions;
 
+  /** Axes in the underlying array, in order. */
+  ArrayList<String> axes = new ArrayList<String>();
+
+  /**
+   * Add named axis to ordered list of axes in this resolution.
+   * Names are stored as upper-case only.
+   *
+   * @param axis name e.g. "x"
+   */
+  public void addAxis(String axis) {
+    axes.add(axis.toUpperCase());
+  }
+
+  /**
+   * Find the index in the ordered list of the named axis.
+   *
+   * @param axis name e.g. "x"
+   * @return index into list of axes
+   */
+  public int getIndex(String axis) {
+    return axes.indexOf(axis.toUpperCase());
+  }
+
+  /**
+   * Create an indexing array (e.g. shape or offset) for this resolution,
+   * which represents the given 5D values.
+   * Since the resolution's underlying array may have less than 5 dimensions,
+   * this is mapping from the 5D space of the OME data model to the
+   * ND space of this resolution's array.
+   *
+   * @param ti T index
+   * @param ci C index
+   * @param zi Z index
+   * @param yi Y index
+   * @param xi X index
+   * @return array representing the given indexes, in this resolution's
+   * dimensional space
+   */
+  public int[] getArray(int ti, int ci, int zi, int yi, int xi) {
+    int[] returnArray = new int[axes.size()];
+    for (int i=0; i<axes.size(); i++) {
+      char axis = axes.get(i).charAt(0);
+      switch (axis) {
+        case 'X':
+          returnArray[i] = xi;
+          break;
+        case 'Y':
+          returnArray[i] = yi;
+          break;
+        case 'Z':
+          returnArray[i] = zi;
+          break;
+        case 'C':
+          returnArray[i] = ci;
+          break;
+        case 'T':
+          returnArray[i] = ti;
+          break;
+        default:
+          throw new IllegalArgumentException("Unexpected axis: " + axis);
+      }
+    }
+    return returnArray;
+  }
+
   /**
    * Calculate image width and height for each resolution.
    * Uses the first tile in the resolution to find the tile size.
@@ -71,9 +136,22 @@ public class PyramidSeries {
       (List<Map<String, Object>>) reader.openSubGroup(path).getAttributes().get(
       "multiscales");
     Map<String, Object> multiscale = multiscales.get(0);
-    List<Map<String, Object>> axes = null;
+    List<Map<String, Object>> storedAxes = null;
     if (multiscales != null) {
-      axes = (List<Map<String, Object>>) multiscale.get("axes");
+      storedAxes = (List<Map<String, Object>>) multiscale.get("axes");
+    }
+
+    if (storedAxes != null) {
+      for (Map<String, Object> axis : storedAxes) {
+        addAxis(axis.get("name").toString());
+      }
+    }
+    else {
+      addAxis("T");
+      addAxis("C");
+      addAxis("Z");
+      addAxis("Y");
+      addAxis("X");
     }
 
     resolutions = new ArrayList<ResolutionDescriptor>();
@@ -82,25 +160,12 @@ public class PyramidSeries {
       descriptor.resolutionNumber = resolution;
       descriptor.path = path + "/" + resolution;
 
-      if (axes != null) {
-        for (Map<String, Object> axis : axes) {
-          descriptor.addAxis(axis.get("name").toString());
-        }
-      }
-      else {
-        descriptor.addAxis("T");
-        descriptor.addAxis("C");
-        descriptor.addAxis("Z");
-        descriptor.addAxis("Y");
-        descriptor.addAxis("X");
-      }
-
       ZarrArray array = reader.openArray(descriptor.path);
       int[] dimensions = array.getShape();
       int[] blockSizes = array.getChunks();
 
-      int xIndex = descriptor.getIndex("X");
-      int yIndex = descriptor.getIndex("Y");
+      int xIndex = getIndex("X");
+      int yIndex = getIndex("Y");
 
       descriptor.sizeX = dimensions[xIndex];
       descriptor.sizeY = dimensions[yIndex];
@@ -147,7 +212,7 @@ public class PyramidSeries {
           // dimensionLengths is in ZCT order, independent of dimensionOrder
           // the two orders may be different if the --rgb flag was used
           String axis = "ZCT".substring(i, i + 1);
-          int axisIndex = descriptor.getIndex(axis);
+          int axisIndex = getIndex(axis);
           LOG.debug("Checking axis {} with index {}, position {}",
             axis, axisIndex, i);
 

@@ -668,9 +668,9 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
       realHeight = region.height;
     }
 
-    int[] gridPosition = descriptor.getArray(pos[2], pos[1], pos[0],
+    int[] gridPosition = s.getArray(pos[2], pos[1], pos[0],
       y * descriptor.tileSizeY, x * descriptor.tileSizeX);
-    int[] shape = descriptor.getArray(1, 1, 1, realHeight, realWidth);
+    int[] shape = s.getArray(1, 1, 1, realHeight, realWidth);
 
     ZarrArray block = reader.openArray(descriptor.path);
 
