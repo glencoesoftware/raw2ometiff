@@ -980,6 +980,51 @@ public class ConversionTest {
     checkRGBIFDs();
   }
 
+  /**
+   * Test conversion of 2D (instead of 5D) Zarr.
+   */
+  @Test
+  public void testCompact2D() throws Exception {
+    input = fake();
+    assertBioFormats2Raw("--compact");
+    assertTool();
+    iteratePixels();
+  }
+
+  /**
+   * Test conversion of 3D (instead of 5D) Zarr.
+   */
+  @Test
+  public void testCompact3D() throws Exception {
+    input = fake("sizeZ", "10");
+    assertBioFormats2Raw("--compact");
+    assertTool();
+    iteratePixels();
+  }
+
+  /**
+   * Test conversion of 3D (instead of 5D) Zarr with RGB.
+   */
+  @Test
+  public void testCompact3DRGB() throws Exception {
+    input = fake("sizeC", "3", "rgb", "3");
+    assertBioFormats2Raw("--compact");
+    assertTool("--rgb");
+    iteratePixels();
+    checkRGBIFDs();
+  }
+
+  /**
+   * Test conversion of 4D (instead of 5D) Zarr.
+   */
+  @Test
+  public void testCompact4D() throws Exception {
+    input = fake("sizeT", "4", "sizeZ", "2");
+    assertBioFormats2Raw("--compact");
+    assertTool();
+    iteratePixels();
+  }
+
   private void checkRGBIFDs() throws FormatException, IOException {
     try (TiffParser parser = new TiffParser(outputOmeTiff.toString())) {
       IFDList mainIFDs = parser.getMainIFDs();
