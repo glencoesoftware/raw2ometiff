@@ -10,6 +10,7 @@ package com.glencoesoftware.pyramid;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import loci.formats.FormatException;
 import loci.formats.FormatTools;
 import loci.formats.ome.OMEPyramidStore;
@@ -54,6 +55,71 @@ public class PyramidSeries {
   /** Description of each resolution in the pyramid. */
   List<ResolutionDescriptor> resolutions;
 
+  /** Axes in the underlying array, in order. */
+  ArrayList<String> axes = new ArrayList<String>();
+
+  /**
+   * Add named axis to ordered list of axes in this resolution.
+   * Names are stored as upper-case only.
+   *
+   * @param axis name e.g. "x"
+   */
+  public void addAxis(String axis) {
+    axes.add(axis.toUpperCase());
+  }
+
+  /**
+   * Find the index in the ordered list of the named axis.
+   *
+   * @param axis name e.g. "x"
+   * @return index into list of axes
+   */
+  public int getIndex(String axis) {
+    return axes.indexOf(axis.toUpperCase());
+  }
+
+  /**
+   * Create an indexing array (e.g. shape or offset) for this resolution,
+   * which represents the given 5D values.
+   * Since the resolution's underlying array may have less than 5 dimensions,
+   * this is mapping from the 5D space of the OME data model to the
+   * ND space of this resolution's array.
+   *
+   * @param ti T index
+   * @param ci C index
+   * @param zi Z index
+   * @param yi Y index
+   * @param xi X index
+   * @return array representing the given indexes, in this resolution's
+   * dimensional space
+   */
+  public int[] getArray(int ti, int ci, int zi, int yi, int xi) {
+    int[] returnArray = new int[axes.size()];
+    for (int i=0; i<axes.size(); i++) {
+      char axis = axes.get(i).charAt(0);
+      switch (axis) {
+        case 'X':
+          returnArray[i] = xi;
+          break;
+        case 'Y':
+          returnArray[i] = yi;
+          break;
+        case 'Z':
+          returnArray[i] = zi;
+          break;
+        case 'C':
+          returnArray[i] = ci;
+          break;
+        case 'T':
+          returnArray[i] = ti;
+          break;
+        default:
+          throw new IllegalArgumentException("Unexpected axis: " + axis);
+      }
+    }
+    return returnArray;
+  }
+
   /**
    * Calculate image width and height for each resolution.
    * Uses the first tile in the resolution to find the tile size.
@@ -65,6 +131,29 @@ public class PyramidSeries {
     throws FormatException, IOException
   {
     LOG.info("Number of resolution levels: {}", numberOfResolutions);
+
+    List<Map<String, Object>> multiscales =
+      (List<Map<String, Object>>) reader.openSubGroup(path).getAttributes().get(
+      "multiscales");
+    Map<String, Object> multiscale = multiscales.get(0);
+    List<Map<String, Object>> storedAxes = null;
+    if (multiscales != null) {
+      storedAxes = (List<Map<String, Object>>) multiscale.get("axes");
+    }
+
+    if (storedAxes != null) {
+      for (Map<String, Object> axis : storedAxes) {
+        addAxis(axis.get("name").toString());
+      }
+    }
+    else {
+      addAxis("T");
+      addAxis("C");
+      addAxis("Z");
+      addAxis("Y");
+      addAxis("X");
+    }
+
     resolutions = new ArrayList<ResolutionDescriptor>();
     for (int resolution = 0; resolution < numberOfResolutions; resolution++) {
       ResolutionDescriptor descriptor = new ResolutionDescriptor();
@@ -75,10 +164,13 @@ public class PyramidSeries {
       int[] dimensions = array.getShape();
       int[] blockSizes = array.getChunks();
 
-      descriptor.sizeX = dimensions[dimensions.length - 1];
-      descriptor.sizeY = dimensions[dimensions.length - 2];
-      descriptor.tileSizeX = blockSizes[blockSizes.length - 1];
-      descriptor.tileSizeY = blockSizes[blockSizes.length - 2];
+      int xIndex = getIndex("X");
+      int yIndex = getIndex("Y");
+
+      descriptor.sizeX = dimensions[xIndex];
+      descriptor.sizeY = dimensions[yIndex];
+      descriptor.tileSizeX = blockSizes[xIndex];
+      descriptor.tileSizeY = blockSizes[yIndex];
 
       if (descriptor.tileSizeX % 16 != 0) {
         LOG.debug("Tile width ({}) not a multiple of 16; correcting",
@@ -116,15 +208,32 @@ public class PyramidSeries {
           }
         }
 
-        if (dimensions.length != 5) {
-          throw new FormatException(String.format(
-            "Expected 5 dimensions in series %d, found %d",
-            index, dimensions.length));
-        }
-        for (int i=0; i<dimensions.length-2; i++) {
-          if (dimensions[i] != dimensionLengths[2 - i]) {
-            throw new FormatException(
-              "Dimension order mismatch in series " + index);
+        for (int i=0; i<dimensionLengths.length; i++) {
+          // dimensionLengths is in ZCT order, independent of dimensionOrder
+          // the two orders may be different if the --rgb flag was used
+          String axis = "ZCT".substring(i, i + 1);
+          int axisIndex = getIndex(axis);
+          LOG.debug("Checking axis {} with index {}, position {}",
+            axis, axisIndex, i);
+
+          if (axisIndex < 0 && dimensionLengths[i] > 1) {
+            throw new FormatException(axis + " axis expected but not defined");
+          }
+          else if (axisIndex >= 0 &&
+            dimensions[axisIndex] != dimensionLengths[i])
+          {
+            // a mismatch on C is usually OK (due to --rgb flag),
+            // but log it anyway
+            // a mismatch anywhere else is a problem
+            if (axis.equalsIgnoreCase("c")) {
+              LOG.debug("Mismatch on dimension {}; expected {} got {}",
+                axis, dimensions[axisIndex], dimensionLengths[i]);
+            }
+            else {
+              throw new FormatException(
+                "Mismatch on dimension " + axis + "; expected " +
+                dimensions[axisIndex] + ", got " + dimensionLengths[i]);
+            }
           }
         }
       }

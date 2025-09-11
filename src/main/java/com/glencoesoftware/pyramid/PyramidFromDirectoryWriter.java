@@ -668,9 +668,9 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
       realHeight = region.height;
     }
 
-    int[] gridPosition = new int[] {pos[2], pos[1], pos[0],
-      y * descriptor.tileSizeY, x * descriptor.tileSizeX};
-    int[] shape = new int[] {1, 1, 1, realHeight, realWidth};
+    int[] gridPosition = s.getArray(pos[2], pos[1], pos[0],
+      y * descriptor.tileSizeY, x * descriptor.tileSizeX);
+    int[] shape = s.getArray(1, 1, 1, realHeight, realWidth);
 
     ZarrArray block = reader.openArray(descriptor.path);
 
@@ -1098,53 +1098,48 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
       ZarrGroup imgGroup = getZarrGroup(s.path);
       ZarrArray imgArray = imgGroup.openArray("0");
       int[] dims = imgArray.getShape();
-      // allow mismatch in channel count...
-      for (int d=0; d<dims.length; d++) {
-        char dimension = s.dimensionOrder.charAt(dims.length - d - 1);
-        int check = 0;
-        switch (dimension) {
-          case 'X':
-            check = x;
-            break;
-          case 'Y':
-            check = y;
-            break;
-          case 'Z':
-            check = s.z;
-            break;
-          case 'C':
-            check = dims[1];
-            break;
-          case 'T':
-            check = s.t;
-            break;
-          default:
-            throw new FormatException("Unrecognized dimension: " + dimension);
-        }
-        if (dims[d] != check) {
-          throw new FormatException("Dimension mismatch: " +
-            dimension + ": Zarr (" + dims[d] + "), OME-XML: (" +
-            check + ")");
+
+      List<Map<String, Object>> imgMultiscales =
+        (List<Map<String, Object>>) imgGroup.getAttributes().get("multiscales");
+      List<Map<String, Object>> imgAxes = null;
+      int channelIndex = -1;
+      if (imgMultiscales != null) {
+        Map<String, Object> multiscale = imgMultiscales.get(0);
+        imgAxes = (List<Map<String, Object>>) multiscale.get("axes");
+        if (imgAxes != null) {
+          for (int a=0; a<imgAxes.size(); a++) {
+            if (imgAxes.get(a).get("name").toString().equalsIgnoreCase("c")) {
+              channelIndex = a;
+              break;
+            }
+          }
         }
       }
+      else {
+        channelIndex = 1;
+      }
+
       // ...but if the channel count mismatches, metadata needs to be corrected
-      if (s.c > dims[1]) {
-        LOG.debug("OME-XML has {} channels; using {} Zarr channels instead",
-          s.c, dims[1]);
-        mergeChannels(seriesIndex, s.c, false);
-        s.c = dims[1];
-      }
-      else if (s.c < dims[1]) {
-        LOG.debug(
-          "OME-XML has {} channels; adding {} to match {} Zarr channels",
-          s.c, dims[1] - s.c + 1, dims[1]);
-        for (int channel=s.c; channel<dims[1]; channel++) {
-          metadata.setChannelID(
-            MetadataTools.createLSID("Channel", seriesIndex, channel),
-            seriesIndex, channel);
+      if (channelIndex >= 0) {
+        if (s.c > dims[channelIndex]) {
+          LOG.debug("OME-XML has {} channels; using {} Zarr channels instead",
+            s.c, dims[channelIndex]);
+          mergeChannels(seriesIndex, s.c, false);
+          s.c = dims[channelIndex];
         }
-        metadata.setPixelsSizeC(new PositiveInteger(dims[1]), seriesIndex);
-        s.c = dims[1];
+        else if (s.c < dims[channelIndex]) {
+          LOG.debug(
+            "OME-XML has {} channels; adding {} to match {} Zarr channels",
+            s.c, dims[channelIndex] - s.c + 1, dims[channelIndex]);
+          for (int channel=s.c; channel<dims[channelIndex]; channel++) {
+            metadata.setChannelID(
+              MetadataTools.createLSID("Channel", seriesIndex, channel),
+              seriesIndex, channel);
+          }
+          metadata.setPixelsSizeC(
+            new PositiveInteger(dims[channelIndex]), seriesIndex);
+          s.c = dims[channelIndex];
+        }
       }
 
       s.dimensionLengths[s.dimensionOrder.indexOf("C") - 2] = s.c;

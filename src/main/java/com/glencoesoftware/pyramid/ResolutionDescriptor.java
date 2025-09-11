@@ -31,4 +31,5 @@ public class ResolutionDescriptor {
 
   /** Number of tiles along Y axis. */
   Integer numberOfTilesY;
+
 }
