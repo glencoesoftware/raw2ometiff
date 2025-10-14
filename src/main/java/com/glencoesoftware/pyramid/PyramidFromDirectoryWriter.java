@@ -1734,13 +1734,18 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
     }
     else {
       ifd.put(IFD.SOFTWARE, FormatTools.CREATOR);
+    }
 
-      if (resolution == 0) {
+    if (resolution == 0) {
+      if (!legacy) {
         ifd.put(IFD.SUB_IFD, (long) 0);
       }
-      else {
-        ifd.put(IFD.NEW_SUBFILE_TYPE, 1);
-      }
+      ifd.put(IFD.NEW_SUBFILE_TYPE, s.planeCount > 1 ? 2 : 0);
+      ifd.put(IFD.SUBFILE_TYPE, 1);
+    }
+    else {
+      ifd.put(IFD.NEW_SUBFILE_TYPE, s.planeCount > 1 ? 3 : 1);
+      ifd.put(IFD.SUBFILE_TYPE, 2);
     }
 
     // only write the OME-XML to the first full-resolution IFD
