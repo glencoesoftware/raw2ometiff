@@ -38,7 +38,7 @@ jobs:
           path: build/distributions/*.zip
           retention-days: 30
       - name: Publish artifacts
-        if: github.event_name != 'pull_request' && matrix.java == 11
+        if: github.event_name != 'pull_request' && matrix.java == 11 && github.repository_owner == 'glencoesoftware'
         run: |
           ./gradlew -PArtifactoryUserName=${ArtifactoryUserName} -PArtifactoryPassword=${ArtifactoryPassword} publish
   release:
