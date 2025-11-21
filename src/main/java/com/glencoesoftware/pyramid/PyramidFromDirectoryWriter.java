@@ -8,6 +8,7 @@
 package com.glencoesoftware.pyramid;
 
 import java.io.IOException;
+import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -69,9 +70,6 @@ import org.json.JSONObject;
 import org.perf4j.StopWatch;
 import org.perf4j.slf4j.Slf4JStopWatch;
 
-import com.bc.zarr.DataType;
-import com.bc.zarr.ZarrArray;
-import com.bc.zarr.ZarrGroup;
 import com.glencoesoftware.bioformats2raw.IProgressListener;
 import com.glencoesoftware.bioformats2raw.NoOpProgressListener;
 import com.glencoesoftware.bioformats2raw.ProgressBarListener;
@@ -80,6 +78,20 @@ import ucar.ma2.InvalidRangeException;
 import picocli.CommandLine;
 import picocli.CommandLine.Option;
 import picocli.CommandLine.Parameters;
+
+// Zarr v2
+
+import com.bc.zarr.DataType;
+import com.bc.zarr.ZarrArray;
+import com.bc.zarr.ZarrGroup;
+
+// Zarr v3
+
+import dev.zarr.zarrjava.ZarrException;
+import dev.zarr.zarrjava.store.FilesystemStore;
+import dev.zarr.zarrjava.utils.Utils;
+import dev.zarr.zarrjava.v3.Array;
+import dev.zarr.zarrjava.v3.Group;
 
 /**
  * Writes a pyramid OME-TIFF file or Bio-Formats 5.9.x "Faas" TIFF file.
@@ -142,7 +154,12 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
 
   String imageFile = null;
 
+  // used for reading v2 data
   private ZarrGroup reader = null;
+
+  // used for reading v3 data
+  private Group v3Reader = null;
+  private FilesystemStore v3Store = null;
 
   /** Writer metadata. */
   OMEPyramidStore metadata;
@@ -672,6 +689,38 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
       y * descriptor.tileSizeY, x * descriptor.tileSizeX);
     int[] shape = s.getArray(1, 1, 1, realHeight, realWidth);
 
+    if (isV3()) {
+      return readV3Tile(s, descriptor, pos, shape, gridPosition);
+    }
+    return readV2Tile(s, descriptor, pos, shape, gridPosition);
+  }
+
+  private byte[] readV3Tile(PyramidSeries s, ResolutionDescriptor descriptor,
+    int[] pos, int[] shape, int[] gridPosition)
+    throws FormatException, IOException
+  {
+    Array block = getZarrV3Array(descriptor.path);
+    if (block == null) {
+      throw new FormatException("Could not find block = " + descriptor.path +
+        ", position = [" + pos[0] + ", " + pos[1] + ", " + pos[2] + "]");
+    }
+    try {
+      ucar.ma2.Array tile = block.read(Utils.toLongArray(gridPosition), shape);
+      ByteBuffer buf = tile.getDataAsByteBuffer(
+        s.littleEndian ? ByteOrder.LITTLE_ENDIAN : ByteOrder.BIG_ENDIAN);
+      byte[] bytes = new byte[buf.remaining()];
+      buf.get(bytes);
+      return bytes;
+    }
+    catch (ZarrException e) {
+      throw new FormatException(e);
+    }
+  }
+
+  private byte[] readV2Tile(PyramidSeries s, ResolutionDescriptor descriptor,
+    int[] pos, int[] shape, int[] gridPosition)
+    throws FormatException, IOException
+  {
     ZarrArray block = reader.openArray(descriptor.path);
 
     if (block == null) {
@@ -769,10 +818,18 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
         metadata.setWellColumn(new NonNegativeInteger(colIndex), 0, i);
         metadata.setWellRow(new NonNegativeInteger(rowIndex), 0, i);
 
-        ZarrGroup wellGroup = getZarrGroup(well);
+        Map<String, Object> wellGroupAttrs = null;
+        if (isV3()) {
+          Group v3WellGroup = getZarrGroupV3(well);
+          wellGroupAttrs = v3WellGroup.metadata.attributes;
+        }
+        else {
+          ZarrGroup wellGroup = getZarrGroup(well);
+          wellGroupAttrs = wellGroup.getAttributes();
+        }
 
         Map<String, Object> wellAttr =
-          (Map<String, Object>) wellGroup.getAttributes().get("well");
+          (Map<String, Object>) wellGroupAttrs.get("well");
         List<Map<String, Object>> images =
           (List<Map<String, Object>>) wellAttr.get("images");
         for (int img=0; img<images.size(); img++) {
@@ -864,6 +921,31 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
     }
   }
 
+  private PixelType getV3PixelType(dev.zarr.zarrjava.v3.DataType type) {
+    switch (type) {
+      case BOOL:
+        return PixelType.BIT;
+      case INT8:
+        return PixelType.INT8;
+      case INT16:
+        return PixelType.INT16;
+      case INT32:
+        return PixelType.INT32;
+      case UINT8:
+        return PixelType.UINT8;
+      case UINT16:
+        return PixelType.UINT16;
+      case UINT32:
+        return PixelType.UINT32;
+      case FLOAT32:
+        return PixelType.FLOAT;
+      case FLOAT64:
+        return PixelType.DOUBLE;
+      default:
+        throw new IllegalArgumentException("Unsupported pixel type: " + type);
+    }
+  }
+
   private ZarrGroup getZarrGroup(String path) throws IOException {
     return ZarrGroup.open(inputDirectory.resolve(path).toString());
   }
@@ -872,12 +954,33 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
     return getZarrGroup(path).getGroupKeys().size();
   }
 
+  private Group getZarrGroupV3(String... path) throws IOException {
+    return Group.open(v3Store.resolve(path));
+  }
+
+  private Array getZarrV3Array(String... path)
+    throws FormatException, IOException
+  {
+    try {
+      return Array.open(v3Store.resolve(path));
+    }
+    catch (ZarrException e) {
+      throw new FormatException(e);
+    }
+  }
+
   /**
    * Calculate the number of series.
    *
    * @return number of series
    */
   private int getSeriesCount() throws IOException {
+    if (isV3()) {
+      // TODO: handle plate data
+      return (int) v3Reader.storeHandle.list()
+        .filter(key -> !key.equals("OME") && !key.equals("zarr.json"))
+        .count();
+    }
     Set<String> groupKeys = reader.getGroupKeys();
     groupKeys.remove("OME");
     int groupKeyCount = groupKeys.size();
@@ -904,18 +1007,35 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
    * @param s current series
    */
   private void findNumberOfResolutions(PyramidSeries s) throws IOException {
-    ZarrGroup seriesGroup = getZarrGroup(s.path);
-    if (seriesGroup == null) {
-      throw new IOException("Expected series " + s.index + " not found");
+    int arrayKeys = 0;
+    List<Map<String, Object>> multiscales = null;
+
+    if (isV3()) {
+      Group v3Series = getZarrGroupV3(s.path);
+      if (v3Series == null) {
+        throw new IOException("Expected series " + s.index + " not found");
+      }
+
+      Map<String, Object> ome =
+        (Map<String, Object>) v3Series.metadata.attributes.get("ome");
+      multiscales = (List<Map<String, Object>>) ome.get("multiscales");
+    }
+    else {
+      ZarrGroup seriesGroup = getZarrGroup(s.path);
+      if (seriesGroup == null) {
+        throw new IOException("Expected series " + s.index + " not found");
+      }
+      arrayKeys = seriesGroup.getArrayKeys().size();
+
+      Map<String, Object> seriesAttributes = seriesGroup.getAttributes();
+      multiscales =
+        (List<Map<String, Object>>) seriesAttributes.get("multiscales");
     }
 
     // use multiscales metadata if it exists, to distinguish between
     // resolutions and labels
     // if no multiscales metadata (older dataset?), assume no labels
     // and just use the path listing length
-    Map<String, Object> seriesAttributes = seriesGroup.getAttributes();
-    List<Map<String, Object>> multiscales =
-      (List<Map<String, Object>>) seriesAttributes.get("multiscales");
     if (multiscales != null && multiscales.size() > 0) {
       List<Map<String, Object>> datasets =
         (List<Map<String, Object>>) multiscales.get(0).get("datasets");
@@ -925,7 +1045,7 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
     }
 
     if (s.numberOfResolutions == 0) {
-      s.numberOfResolutions = seriesGroup.getArrayKeys().size();
+      s.numberOfResolutions = arrayKeys;
     }
   }
 
@@ -938,11 +1058,18 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
   {
     createReader();
 
-    if (reader == null) {
+    if (reader == null && v3Store == null) {
       throw new FormatException("Could not create a reader");
     }
 
-    Map<String, Object> attributes = reader.getAttributes();
+    Map<String, Object> attributes = null;
+    if (isV3()) {
+      attributes = v3Reader.metadata.attributes;
+      attributes = (Map<String, Object>) attributes.get("ome");
+    }
+    else {
+      attributes = reader.getAttributes();
+    }
     Integer layoutVersion = (Integer) attributes.get("bioformats2raw.layout");
     if (layoutVersion == null) {
       LOG.warn("Layout version not recorded; may be unsupported");
@@ -1095,12 +1222,30 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
       s.dimensionLengths[s.dimensionOrder.indexOf("C") - 2] = s.c;
 
       // make sure that OME-XML and first resolution array have same dimensions
-      ZarrGroup imgGroup = getZarrGroup(s.path);
-      ZarrArray imgArray = imgGroup.openArray("0");
-      int[] dims = imgArray.getShape();
+      Map<String, Object> firstResAttrs = null;
+      int[] dims = null;
+      boolean bigEndian = false;
+      PixelType type = null;
+
+      if (isV3()) {
+        Group v3ImgGroup = getZarrGroupV3(s.path);
+        firstResAttrs =
+          (Map<String, Object>) v3ImgGroup.metadata.attributes.get("ome");
+        Array v3Array = getZarrV3Array(s.path, "0");
+        dims = Utils.toIntArray(v3Array.metadata.shape);
+        type = getV3PixelType(v3Array.metadata.dataType);
+      }
+      else {
+        ZarrGroup imgGroup = getZarrGroup(s.path);
+        ZarrArray imgArray = imgGroup.openArray("0");
+        dims = imgArray.getShape();
+        firstResAttrs = imgGroup.getAttributes();
+        bigEndian = imgArray.getByteOrder() == ByteOrder.BIG_ENDIAN;
+        type = getPixelType(imgArray.getDataType());
+      }
 
       List<Map<String, Object>> imgMultiscales =
-        (List<Map<String, Object>>) imgGroup.getAttributes().get("multiscales");
+        (List<Map<String, Object>>) firstResAttrs.get("multiscales");
       List<Map<String, Object>> imgAxes = null;
       int channelIndex = -1;
       if (imgMultiscales != null) {
@@ -1146,7 +1291,6 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
       s.planeCount = s.z * s.t;
 
       // Zarr format allows both little and big endian order
-      boolean bigEndian = imgArray.getByteOrder() == ByteOrder.BIG_ENDIAN;
       s.littleEndian = !bigEndian;
       if (bigEndian != metadata.getPixelsBigEndian(seriesIndex)) {
         LOG.debug("Setting BigEndian={} for series {}", bigEndian, seriesIndex);
@@ -1154,7 +1298,6 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
       }
 
       // make sure pixel types are consistent between Zarr and OME metadata
-      PixelType type = getPixelType(imgArray.getDataType());
       s.pixelType = FormatTools.pixelTypeFromString(type.getValue());
       if (type != metadata.getPixelsType(seriesIndex)) {
         LOG.debug("Setting PixelsType = {} for series {}", type, seriesIndex);
@@ -1208,7 +1351,12 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
       }
 
       s.planeCount *= effectiveChannels;
-      s.describePyramid(reader, metadata);
+      if (isV3()) {
+        s.describePyramidV3(v3Store, metadata);
+      }
+      else {
+        s.describePyramid(reader, metadata);
+      }
 
       metadata.setTiffDataIFD(new NonNegativeInteger(totalPlanes), s.index, 0);
 
@@ -1917,8 +2065,24 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
     LOG.debug("attempting to open {}", zarr);
     if (Files.exists(zarr)) {
       LOG.debug("  zarr directory exists");
-      reader = ZarrGroup.open(zarr.toString());
+      try {
+        reader = ZarrGroup.open(zarr.toString());
+      }
+      catch (IOException e) {
+        LOG.debug("Could not open as v2", e);
+      }
+
+      // couldn't open or no attributes implies we should try
+      // reading as v3 instead of v2
+      if (reader == null || reader.getAttributes().size() == 0) {
+        v3Store = new FilesystemStore(zarr);
+        v3Reader = Group.open(v3Store.resolve());
+      }
     }
+  }
+
+  private boolean isV3() {
+    return v3Store != null;
   }
 
   /**
