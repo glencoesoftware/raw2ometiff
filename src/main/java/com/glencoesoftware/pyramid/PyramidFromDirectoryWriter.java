@@ -123,6 +123,8 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
   /** Name of OME-XML metadata file. */
   private static final String OMEXML_FILE = "METADATA.ome.xml";
 
+  private static final String V3_GROUP_FILE = "zarr.json";
+
   private static final Logger LOG =
     LoggerFactory.getLogger(PyramidFromDirectoryWriter.class);
 
@@ -951,6 +953,11 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
   }
 
   private int getSubgroupCount(String path) throws IOException {
+    if (isV3()) {
+      return (int) v3Store.resolve(path).list()
+        .filter(key -> !key.equals(V3_GROUP_FILE))
+        .count();
+    }
     return getZarrGroup(path).getGroupKeys().size();
   }
 
@@ -975,18 +982,8 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
    * @return number of series
    */
   private int getSeriesCount() throws IOException {
-    if (isV3()) {
-      // TODO: handle plate data
-      return (int) v3Reader.storeHandle.list()
-        .filter(key -> !key.equals("OME") && !key.equals("zarr.json"))
-        .count();
-    }
-    Set<String> groupKeys = reader.getGroupKeys();
-    groupKeys.remove("OME");
-    int groupKeyCount = groupKeys.size();
     LOG.debug("getSeriesCount:");
     LOG.debug("  plateData = {}", plateData);
-    LOG.debug("  group key count = {}", groupKeyCount);
     if (plateData != null) {
       int count = 0;
       List<Map<String, Object>> wells =
@@ -997,6 +994,16 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
       LOG.debug("  returning plate-based series count = {}", count);
       return count;
     }
+    if (isV3()) {
+      // TODO: handle plate data
+      return (int) v3Reader.storeHandle.list()
+        .filter(key -> !key.equals("OME") && !key.equals(V3_GROUP_FILE))
+        .count();
+    }
+    Set<String> groupKeys = reader.getGroupKeys();
+    groupKeys.remove("OME");
+    int groupKeyCount = groupKeys.size();
+    LOG.debug("  group key count = {}", groupKeyCount);
     return groupKeyCount;
   }
 
