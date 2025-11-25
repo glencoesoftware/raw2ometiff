@@ -19,6 +19,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.stream.Stream;
 
 import com.bc.zarr.ZarrArray;
 import com.bc.zarr.ZarrGroup;
@@ -27,6 +28,10 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.glencoesoftware.bioformats2raw.Converter;
 import com.glencoesoftware.pyramid.CompressionType;
 import com.glencoesoftware.pyramid.PyramidFromDirectoryWriter;
+
+import dev.zarr.zarrjava.store.FilesystemStore;
+import dev.zarr.zarrjava.v3.ArrayMetadata;
+import dev.zarr.zarrjava.v3.chunkkeyencoding.DefaultChunkKeyEncoding;
 
 import loci.common.DataTools;
 import loci.common.services.ServiceFactory;
@@ -42,13 +47,21 @@ import picocli.CommandLine;
 import picocli.CommandLine.ExecutionException;
 
 import org.apache.commons.lang3.SystemUtils;
+
 import org.junit.Assert;
 import org.junit.Assume;
-import org.junit.Rule;
-import org.junit.Test;
-import org.junit.rules.TemporaryFolder;
+
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.io.TempDir;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.MethodSource;
 
 public class ConversionTest {
+
+  private static final String V2_ARGUMENT = "";
+  private static final String V3_ARGUMENT = "--v3";
 
   Path input;
 
@@ -60,8 +73,22 @@ public class ConversionTest {
 
   PyramidFromDirectoryWriter writer;
 
-  @Rule
-  public TemporaryFolder tmp = new TemporaryFolder();
+  /**
+   * Set up the temporary directory for conversion output.
+   *
+   * @param tmp temporary directory (automatically created)
+   */
+  @BeforeEach
+  public void setup(@TempDir Path tmp) throws Exception {
+    output = tmp.resolve("test");
+  }
+
+  static Stream<Arguments> getVersions() {
+    return Stream.of(
+      Arguments.of(V2_ARGUMENT),
+      Arguments.of(V3_ARGUMENT)
+    );
+  }
 
   /**
    * Run the bioformats2raw main method and check for success or failure.
@@ -71,15 +98,21 @@ public class ConversionTest {
   void assertBioFormats2Raw(String...additionalArgs) throws IOException {
     List<String> args = new ArrayList<String>();
     for (String arg : additionalArgs) {
-      args.add(arg);
+      if (!arg.isEmpty()) {
+        args.add(arg);
+      }
     }
     args.add(input.toString());
-    output = tmp.newFolder().toPath().resolve("test");
     args.add(output.toString());
     try {
       converter = new Converter();
       CommandLine.call(converter, args.toArray(new String[]{}));
-      Assert.assertTrue(Files.exists(output.resolve(".zattrs")));
+      if (args.contains(V3_ARGUMENT)) {
+        Assert.assertTrue(Files.exists(output.resolve("zarr.json")));
+      }
+      else {
+        Assert.assertTrue(Files.exists(output.resolve(".zattrs")));
+      }
       Assert.assertTrue(Files.exists(
         output.resolve("OME").resolve("METADATA.ome.xml")));
     }
@@ -292,17 +325,33 @@ public class ConversionTest {
         reader.isLittleEndian());
   }
 
-  private void assertDefaults() throws Exception {
-    ZarrArray series0 = ZarrGroup.open(output.resolve("0")).openArray("0");
-    // no getter for DimensionSeparator in ZarrArray
-    // check that the correct separator was used by checking
-    // that the expected first chunk file exists
-    Assert.assertTrue(output.resolve("0/0/0/0/0/0/0").toFile().exists());
-    // Also ensure we're using the latest .zarray metadata
-    ObjectMapper objectMapper = new ObjectMapper();
-    JsonNode root = objectMapper.readTree(
-        output.resolve("0/0/.zarray").toFile());
-    Assert.assertEquals("/", root.path("dimension_separator").asText());
+  private void assertDefaults(String version) throws Exception {
+    if (version.equals(V2_ARGUMENT)) {
+      ZarrArray series0 = ZarrGroup.open(output.resolve("0")).openArray("0");
+      // no getter for DimensionSeparator in ZarrArray
+      // check that the correct separator was used by checking
+      // that the expected first chunk file exists
+      Assert.assertTrue(output.resolve("0/0/0/0/0/0/0").toFile().exists());
+      // Also ensure we're using the latest .zarray metadata
+      ObjectMapper objectMapper = new ObjectMapper();
+      JsonNode root = objectMapper.readTree(
+          output.resolve("0/0/.zarray").toFile());
+      Assert.assertEquals("/", root.path("dimension_separator").asText());
+    }
+    else if (version.equals(V3_ARGUMENT)) {
+      Assert.assertTrue(output.resolve("0/0/c/0/0/0/0/0").toFile().exists());
+
+      FilesystemStore store = new FilesystemStore(output);
+      dev.zarr.zarrjava.v3.Array series0 =
+        dev.zarr.zarrjava.v3.Array.open(store.resolve("0/0"));
+      ArrayMetadata metadata = series0.metadata;
+
+      DefaultChunkKeyEncoding encoding =
+        (DefaultChunkKeyEncoding) metadata.chunkKeyEncoding;
+      Assert.assertEquals("/",
+        encoding.configuration.separator.getValue());
+      Assert.assertEquals(3, metadata.zarrFormat);
+    }
     try (ImageReader reader = new ImageReader()) {
       reader.setFlattenedResolutions(false);
       reader.setId(outputOmeTiff.toString());
@@ -313,37 +362,46 @@ public class ConversionTest {
 
   /**
    * Test defaults.
+   *
+   * @param version version parameter for bioformats2raw
    */
-  @Test
-  public void testDefaults() throws Exception {
+  @ParameterizedTest
+  @MethodSource("getVersions")
+  public void testDefaults(String version) throws Exception {
     input = fake();
-    assertBioFormats2Raw();
+    assertBioFormats2Raw(version);
     assertTool();
-    assertDefaults();
+    assertDefaults(version);
   }
 
   /**
    * Test symlink as the root.
+   *
+   * @param version version parameter for bioformats2raw
    */
-  @Test
-  public void testSymlinkAsRoot() throws Exception {
+  @ParameterizedTest
+  @MethodSource("getVersions")
+  public void testSymlinkAsRoot(String version) throws Exception {
     Assume.assumeTrue(SystemUtils.IS_OS_LINUX);
     input = fake();
-    assertBioFormats2Raw();
+    assertBioFormats2Raw(version);
     Path notASymlink = output.resolveSibling(output.getFileName() + ".old");
     Files.move(output, notASymlink);
     Files.createSymbolicLink(output, notASymlink);
     assertTool();
-    assertDefaults();
+    assertDefaults(version);
   }
 
   /**
    * Test series count check.
+   *
+   * @param version version parameter for bioformats2raw
    */
-  @Test
-  public void testSeriesCountCheck() throws Exception {
+  @ParameterizedTest
+  @MethodSource("getVersions")
+  public void testSeriesCountCheck(String version) throws Exception {
     input = fake();
-    assertBioFormats2Raw();
+    assertBioFormats2Raw(version);
     Files.delete(output.resolve("0").resolve(".zgroup"));
     try {
       assertTool();
@@ -357,11 +415,14 @@ public class ConversionTest {
 
   /**
    * Test South and East edge padding.
+   *
+   * @param version version parameter for bioformats2raw
    */
-  @Test
-  public void testSouthEastEdgePadding() throws Exception {
+  @ParameterizedTest
+  @MethodSource("getVersions")
+  public void testSouthEastEdgePadding(String version) throws Exception {
     input = fake();
-    assertBioFormats2Raw("-w", "240", "-h", "240");
+    assertBioFormats2Raw("-w", "240", "-h", "240", version);
     assertTool("--compression", "raw");
     try (ImageReader reader = new ImageReader()) {
       reader.setFlattenedResolutions(false);
@@ -392,11 +453,14 @@ public class ConversionTest {
 
   /**
    * Test edge padding uint16.
+   *
+   * @param version version parameter for bioformats2raw
    */
-  @Test
-  public void testEdgePaddingUint16() throws Exception {
+  @ParameterizedTest
+  @MethodSource("getVersions")
+  public void testEdgePaddingUint16(String version) throws Exception {
     input = fake("pixelType", "uint16");
-    assertBioFormats2Raw("-w", "240", "-h", "240");
+    assertBioFormats2Raw("-w", "240", "-h", "240", version);
     assertTool("--compression", "raw");
     try (ImageReader reader = new ImageReader()) {
       reader.setFlattenedResolutions(false);
@@ -427,11 +491,14 @@ public class ConversionTest {
 
   /**
    * Test 17x19 tile size with uint16 data.
+   *
+   * @param version version parameter for bioformats2raw
    */
-  @Test
-  public void testOddTileSize() throws Exception {
+  @ParameterizedTest
+  @MethodSource("getVersions")
+  public void testOddTileSize(String version) throws Exception {
     input = fake("pixelType", "uint16");
-    assertBioFormats2Raw("-w", "17", "-h", "19");
+    assertBioFormats2Raw("-w", "17", "-h", "19", version);
     assertTool("--compression", "raw");
     iteratePixels();
 
@@ -449,22 +516,28 @@ public class ConversionTest {
 
   /**
    * Test 128x128 tile size with 497x498 image.
+   *
+   * @param version version parameter for bioformats2raw
    */
-  @Test
-  public void testOddImageSize() throws Exception {
+  @ParameterizedTest
+  @MethodSource("getVersions")
+  public void testOddImageSize(String version) throws Exception {
     input = fake("sizeX", "497", "sizeY", "498", "pixelType", "uint16");
-    assertBioFormats2Raw("-w", "128", "-h", "128");
+    assertBioFormats2Raw("-w", "128", "-h", "128", version);
     assertTool();
     iteratePixels();
   }
 
   /**
    * Test RGB with multiple timepoints.
+   *
+   * @param version version parameter for bioformats2raw
    */
-  @Test
-  public void testRGBMultiT() throws Exception {
+  @ParameterizedTest
+  @MethodSource("getVersions")
+  public void testRGBMultiT(String version) throws Exception {
     input = fake("sizeC", "3", "sizeT", "5", "rgb", "3");
-    assertBioFormats2Raw();
+    assertBioFormats2Raw(version);
     assertTool("--rgb");
     iteratePixels();
     try (ImageReader reader = new ImageReader()) {
@@ -485,11 +558,14 @@ public class ConversionTest {
 
   /**
    * Test RGB with multiple channels.
+   *
+   * @param version version parameter for bioformats2raw
    */
-  @Test
-  public void testRGBMultiC() throws Exception {
+  @ParameterizedTest
+  @MethodSource("getVersions")
+  public void testRGBMultiC(String version) throws Exception {
     input = fake("sizeC", "12", "rgb", "3");
-    assertBioFormats2Raw();
+    assertBioFormats2Raw(version);
     assertTool("--rgb");
     iteratePixels();
     try (ImageReader reader = new ImageReader()) {
@@ -512,9 +588,12 @@ public class ConversionTest {
 
   /**
    * Test RGB with channel metadata.
+   *
+   * @param version version parameter for bioformats2raw
    */
-  @Test
-  public void testRGBChannelMetadata() throws Exception {
+  @ParameterizedTest
+  @MethodSource("getVersions")
+  public void testRGBChannelMetadata(String version) throws Exception {
     Map<String, String> options = new HashMap<String, String>();
     options.put("sizeC", "3");
     options.put("rgb", "3");
@@ -525,7 +604,7 @@ public class ConversionTest {
     series0.put("ChannelName_0", "FITC");
     series.put(0, series0);
     input = fake(options, series);
-    assertBioFormats2Raw();
+    assertBioFormats2Raw(version);
     assertTool("--rgb");
     iteratePixels();
     try (ImageReader reader = new ImageReader()) {
@@ -545,11 +624,14 @@ public class ConversionTest {
 
   /**
    * Test TIFF metadata.
+   *
+   * @param version version parameter for bioformats2raw
    */
-  @Test
-  public void testMetadata() throws Exception {
+  @ParameterizedTest
+  @MethodSource("getVersions")
+  public void testMetadata(String version) throws Exception {
     input = fake("physicalSizeX", "0.5", "physicalSizeY", "0.6");
-    assertBioFormats2Raw();
+    assertBioFormats2Raw(version);
     assertTool();
 
     try (TiffParser parser = new TiffParser(outputOmeTiff.toString())) {
@@ -563,12 +645,15 @@ public class ConversionTest {
 
   /**
    * Test small plate.
+   *
+   * @param version version parameter for bioformats2raw
    */
-  @Test
-  public void testPlate() throws Exception {
+  @ParameterizedTest
+  @MethodSource("getVersions")
+  public void testPlate(String version) throws Exception {
     input =
       fake("plateRows", "2", "plateCols", "3", "fields", "4", "sizeC", "3");
-    assertBioFormats2Raw();
+    assertBioFormats2Raw(version);
     assertTool();
     iteratePixels();
     try (ImageReader reader = new ImageReader()) {
@@ -586,12 +671,15 @@ public class ConversionTest {
 
   /**
    * Test single image no HCS.
+   *
+   * @param version version parameter for bioformats2raw
    */
-  @Test
-  public void testSingleImageNoHCS() throws Exception {
+  @ParameterizedTest
+  @MethodSource("getVersions")
+  public void testSingleImageNoHCS(String version) throws Exception {
     input =
       fake("plateRows", "2", "plateCols", "3", "fields", "4", "sizeC", "3");
-    assertBioFormats2Raw("--series", "0", "--no-hcs");
+    assertBioFormats2Raw("--series", "0", "--no-hcs", version);
     assertTool();
     try (ImageReader reader = new ImageReader()) {
       ServiceFactory sf = new ServiceFactory();
@@ -608,12 +696,15 @@ public class ConversionTest {
 
   /**
    * Test splitting series into separate files.
+   *
+   * @param version version parameter for bioformats2raw
    */
-  @Test
-  public void testSplitFiles() throws Exception {
+  @ParameterizedTest
+  @MethodSource("getVersions")
+  public void testSplitFiles(String version) throws Exception {
     input =
       fake("plateRows", "2", "plateCols", "3", "fields", "4", "sizeC", "3");
-    assertBioFormats2Raw();
+    assertBioFormats2Raw(version);
     assertTool(24, 24, "--split");
 
     try (ImageReader reader = new ImageReader()) {
@@ -638,12 +729,15 @@ public class ConversionTest {
 
   /**
    * Test splitting planes into separate files.
+   *
+   * @param version version parameter for bioformats2raw
    */
-  @Test
-  public void testSplitPlanes() throws Exception {
+  @ParameterizedTest
+  @MethodSource("getVersions")
+  public void testSplitPlanes(String version) throws Exception {
     input =
       fake("plateRows", "2", "plateCols", "3", "fields", "4", "sizeC", "3");
-    assertBioFormats2Raw();
+    assertBioFormats2Raw(version);
     assertTool(24, 72, "--split-planes");
 
     try (ImageReader reader = new ImageReader()) {
@@ -669,12 +763,15 @@ public class ConversionTest {
   /**
    * Test what happens when the split-by-series and split-by-plane
    * options are used together.
+   *
+   * @param version version parameter for bioformats2raw
    */
-  @Test
-  public void testBothSplitOptions() throws Exception {
+  @ParameterizedTest
+  @MethodSource("getVersions")
+  public void testBothSplitOptions(String version) throws Exception {
     input =
       fake("plateRows", "2", "plateCols", "3", "fields", "4", "sizeC", "3");
-    assertBioFormats2Raw();
+    assertBioFormats2Raw(version);
     // expect --split-planes to take precedence
     assertTool(24, 72, "--split", "--split-planes");
 
@@ -700,11 +797,14 @@ public class ConversionTest {
 
   /**
    * Test RGB with multiple channels using API instead of command line.
+   *
+   * @param version version parameter for bioformats2raw
    */
-  @Test
-  public void testOptionsAPI() throws Exception {
+  @ParameterizedTest
+  @MethodSource("getVersions")
+  public void testOptionsAPI(String version) throws Exception {
     input = fake("sizeC", "12", "rgb", "3");
-    assertBioFormats2Raw();
+    assertBioFormats2Raw(version);
 
     outputOmeTiff = output.resolve("output.ome.tiff");
     PyramidFromDirectoryWriter apiConverter = new PyramidFromDirectoryWriter();
@@ -723,11 +823,14 @@ public class ConversionTest {
 
   /**
    * Test resetting options to their default values.
+   *
+   * @param version version parameter for bioformats2raw
    */
-  @Test
-  public void testResetAPI() throws Exception {
+  @ParameterizedTest
+  @MethodSource("getVersions")
+  public void testResetAPI(String version) throws Exception {
     input = fake("sizeC", "12", "rgb", "3");
-    assertBioFormats2Raw();
+    assertBioFormats2Raw(version);
 
     outputOmeTiff = output.resolve("output.ome.tiff");
 
@@ -778,11 +881,14 @@ public class ConversionTest {
 
   /**
    * Test "--quality" command line option.
+   *
+   * @param version version parameter for bioformats2raw
    */
-  @Test
-  public void testCompressionQuality() throws Exception {
+  @ParameterizedTest
+  @MethodSource("getVersions")
+  public void testCompressionQuality(String version) throws Exception {
     input = fake("sizeC", "3", "rgb", "3");
-    assertBioFormats2Raw();
+    assertBioFormats2Raw(version);
     assertTool("--compression", "JPEG-2000", "--quality", "0.25", "--rgb");
 
     try (ImageReader reader = new ImageReader()) {
@@ -807,11 +913,14 @@ public class ConversionTest {
 
   /**
    * Test conversion of a single multiscales, similar to a label image.
+   *
+   * @param version version parameter for bioformats2raw
    */
-  @Test
-  public void testLabelImage() throws Exception {
+  @ParameterizedTest
+  @MethodSource("getVersions")
+  public void testLabelImage(String version) throws Exception {
     input = fake("sizeX", "2000", "sizeY", "1500");
-    assertBioFormats2Raw();
+    assertBioFormats2Raw(version);
     output = output.resolve("0");
     assertTool("-f", input.toString());
     iteratePixels();
@@ -821,11 +930,14 @@ public class ConversionTest {
    * Test conversion of a single multiscales (similar to label image),
    * but intentionally provide incorrect XY metadata.
    * Conversion is expected to fail in this case.
+   *
+   * @param version version parameter for bioformats2raw
    */
-  @Test
-  public void testLabelImageWrongSize() throws Exception {
+  @ParameterizedTest
+  @MethodSource("getVersions")
+  public void testLabelImageWrongSize(String version) throws Exception {
     input = fake("sizeX", "2000", "sizeY", "1500");
-    assertBioFormats2Raw();
+    assertBioFormats2Raw(version);
     output = output.resolve("0");
     try {
       assertTool("-f", "test.fake");
@@ -841,11 +953,14 @@ public class ConversionTest {
    * Test conversion of a single multiscales (similar to label image),
    * but intentionally provide incorrect T metadata.
    * Conversion is expected to fail in this case.
+   *
+   * @param version version parameter for bioformats2raw
    */
-  @Test
-  public void testLabelImageWrongT() throws Exception {
+  @ParameterizedTest
+  @MethodSource("getVersions")
+  public void testLabelImageWrongT(String version) throws Exception {
     input = fake();
-    assertBioFormats2Raw();
+    assertBioFormats2Raw(version);
     output = output.resolve("0");
     try {
       assertTool("-f", fake("sizeT", "5").toString());
@@ -861,11 +976,14 @@ public class ConversionTest {
    * Test conversion of a single multiscales (similar to label image),
    * but intentionally provide incorrect Z metadata.
    * Conversion is expected to fail in this case.
+   *
+   * @param version version parameter for bioformats2raw
    */
-  @Test
-  public void testLabelImageWrongZ() throws Exception {
+  @ParameterizedTest
+  @MethodSource("getVersions")
+  public void testLabelImageWrongZ(String version) throws Exception {
     input = fake();
-    assertBioFormats2Raw();
+    assertBioFormats2Raw(version);
     output = output.resolve("0");
     try {
       assertTool("-f", fake("sizeZ", "4").toString());
@@ -880,11 +998,16 @@ public class ConversionTest {
   /**
    * Test conversion of single multiscales (label image), where the provided
    * metadata has more channels than the Zarr.
+   *
+   * @param version version parameter for bioformats2raw
    */
-  @Test
-  public void testLabelImageExtraMetadataChannels() throws Exception {
+  @ParameterizedTest
+  @MethodSource("getVersions")
+  public void testLabelImageExtraMetadataChannels(String version)
+    throws Exception
+  {
     input = fake("sizeX", "2000", "sizeY", "1500");
-    assertBioFormats2Raw();
+    assertBioFormats2Raw(version);
     output = output.resolve("0");
 
     Path metadata = fake("sizeX", "2000", "sizeY", "1500", "sizeC", "3");
@@ -896,11 +1019,16 @@ public class ConversionTest {
    * Test conversion of single multiscales (label image), where the provided
    * metadata has fewer channels than the Zarr.
    * Extra channels should be inserted into the metadata.
+   *
+   * @param version version parameter for bioformats2raw
    */
-  @Test
-  public void testLabelImageNotEnoughMetadataChannels() throws Exception {
+  @ParameterizedTest
+  @MethodSource("getVersions")
+  public void testLabelImageNotEnoughMetadataChannels(String version)
+    throws Exception
+  {
     input = fake("sizeX", "2000", "sizeY", "1500", "sizeC", "3");
-    assertBioFormats2Raw();
+    assertBioFormats2Raw(version);
     output = output.resolve("0");
 
     Path metadata = fake("sizeX", "2000", "sizeY", "1500", "sizeC", "1");
@@ -913,12 +1041,15 @@ public class ConversionTest {
    * metadata has different pixel type and endianness compared to the Zarr.
    * Pixel type and endianness should be inherited from the Zarr,
    * otherwise the output data is likely to be incorrect.
+   *
+   * @param version version parameter for bioformats2raw
    */
-  @Test
-  public void testLabelImagePixelTypeMismatch() throws Exception {
+  @ParameterizedTest
+  @MethodSource("getVersions")
+  public void testLabelImagePixelTypeMismatch(String version) throws Exception {
     input = fake("sizeX", "2000", "sizeY", "1500",
       "pixelType", "uint16", "little", "true");
-    assertBioFormats2Raw();
+    assertBioFormats2Raw(version);
     output = output.resolve("0");
 
     Path metadata = fake("sizeX", "2000", "sizeY", "1500",
@@ -930,11 +1061,14 @@ public class ConversionTest {
   /**
    * Test conversion of single multiscales (label image) with 3 channels
    * and RGB output.
+   *
+   * @param version version parameter for bioformats2raw
    */
-  @Test
-  public void testRGBLabelImage() throws Exception {
+  @ParameterizedTest
+  @MethodSource("getVersions")
+  public void testRGBLabelImage(String version) throws Exception {
     input = fake("sizeC", "3", "rgb", "3");
-    assertBioFormats2Raw();
+    assertBioFormats2Raw(version);
     output = output.resolve("0");
     assertTool("--rgb", "-f", input.toString());
     iteratePixels();
@@ -956,11 +1090,14 @@ public class ConversionTest {
   /**
    * Test conversion of single multiscales (label image) with 3 channels
    * and RGB output, and mismatching input channel counts.
+   *
+   * @param version version parameter for bioformats2raw
    */
-  @Test
-  public void testRGBLabelImageDifferentC() throws Exception {
+  @ParameterizedTest
+  @MethodSource("getVersions")
+  public void testRGBLabelImageDifferentC(String version) throws Exception {
     input = fake("sizeC", "3", "rgb", "3");
-    assertBioFormats2Raw();
+    assertBioFormats2Raw(version);
     output = output.resolve("0");
     assertTool("--rgb", "-f", fake("sizeC", "4").toString());
     iteratePixels();
@@ -982,33 +1119,42 @@ public class ConversionTest {
 
   /**
    * Test conversion of 2D (instead of 5D) Zarr.
+   *
+   * @param version version parameter for bioformats2raw
    */
-  @Test
-  public void testCompact2D() throws Exception {
+  @ParameterizedTest
+  @MethodSource("getVersions")
+  public void testCompact2D(String version) throws Exception {
     input = fake();
-    assertBioFormats2Raw("--compact");
+    assertBioFormats2Raw("--compact", version);
     assertTool();
     iteratePixels();
   }
 
   /**
    * Test conversion of 3D (instead of 5D) Zarr.
+   *
+   * @param version version parameter for bioformats2raw
    */
-  @Test
-  public void testCompact3D() throws Exception {
+  @ParameterizedTest
+  @MethodSource("getVersions")
+  public void testCompact3D(String version) throws Exception {
     input = fake("sizeZ", "10");
-    assertBioFormats2Raw("--compact");
+    assertBioFormats2Raw("--compact", version);
     assertTool();
     iteratePixels();
   }
 
   /**
    * Test conversion of 3D (instead of 5D) Zarr with RGB.
+   *
+   * @param version version parameter for bioformats2raw
    */
-  @Test
-  public void testCompact3DRGB() throws Exception {
+  @ParameterizedTest
+  @MethodSource("getVersions")
+  public void testCompact3DRGB(String version) throws Exception {
     input = fake("sizeC", "3", "rgb", "3");
-    assertBioFormats2Raw("--compact");
+    assertBioFormats2Raw("--compact", version);
     assertTool("--rgb");
     iteratePixels();
     checkRGBIFDs();
@@ -1016,11 +1162,14 @@ public class ConversionTest {
 
   /**
    * Test conversion of 4D (instead of 5D) Zarr.
+   *
+   * @param version version parameter for bioformats2raw
    */
-  @Test
-  public void testCompact4D() throws Exception {
+  @ParameterizedTest
+  @MethodSource("getVersions")
+  public void testCompact4D(String version) throws Exception {
     input = fake("sizeT", "4", "sizeZ", "2");
-    assertBioFormats2Raw("--compact");
+    assertBioFormats2Raw("--compact", version);
     assertTool();
     iteratePixels();
   }
