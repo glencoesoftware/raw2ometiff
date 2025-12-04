@@ -344,7 +344,7 @@ public class ConversionTest {
       FilesystemStore store = new FilesystemStore(output);
       dev.zarr.zarrjava.v3.Array series0 =
         dev.zarr.zarrjava.v3.Array.open(store.resolve("0/0"));
-      ArrayMetadata metadata = series0.metadata;
+      ArrayMetadata metadata = series0.metadata();
 
       DefaultChunkKeyEncoding encoding =
         (DefaultChunkKeyEncoding) metadata.chunkKeyEncoding;

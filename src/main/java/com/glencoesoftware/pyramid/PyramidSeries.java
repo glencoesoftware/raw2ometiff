@@ -156,8 +156,8 @@ public class PyramidSeries {
       descriptor.path = path + "/" + resolution;
       try {
         Array array = Array.open(v3.resolve(descriptor.path));
-        int[] shape = Utils.toIntArray(array.metadata.shape);
-        int[] chunk = array.metadata.chunkShape();
+        int[] shape = Utils.toIntArray(array.metadata().shape);
+        int[] chunk = array.metadata().chunkShape();
         setupResolution(descriptor, resolution, shape, chunk, metadata);
       }
       catch (ZarrException e) {

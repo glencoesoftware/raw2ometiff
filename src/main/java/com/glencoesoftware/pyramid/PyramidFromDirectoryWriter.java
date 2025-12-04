@@ -1237,10 +1237,10 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
       if (isV3()) {
         Group v3ImgGroup = getZarrGroupV3(s.path);
         firstResAttrs =
-          (Map<String, Object>) v3ImgGroup.metadata.attributes.get("ome");
+          (Map<String, Object>) v3ImgGroup.metadata().attributes.get("ome");
         Array v3Array = getZarrV3Array(s.path, "0");
-        dims = Utils.toIntArray(v3Array.metadata.shape);
-        type = getV3PixelType(v3Array.metadata.dataType);
+        dims = Utils.toIntArray(v3Array.metadata().shape);
+        type = getV3PixelType(v3Array.metadata().dataType);
       }
       else {
         ZarrGroup imgGroup = getZarrGroup(s.path);
