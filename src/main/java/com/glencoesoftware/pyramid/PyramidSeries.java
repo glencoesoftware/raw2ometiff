@@ -153,7 +153,10 @@ public class PyramidSeries {
     resolutions = new ArrayList<ResolutionDescriptor>();
     for (int resolution = 0; resolution < numberOfResolutions; resolution++) {
       ResolutionDescriptor descriptor = new ResolutionDescriptor();
-      descriptor.path = path + "/" + resolution;
+      descriptor.path = String.valueOf(resolution);
+      if (!path.isEmpty()) {
+        descriptor.path = path + "/" + descriptor.path;
+      }
       try {
         Array array = Array.open(v3.resolve(descriptor.path));
         int[] shape = Utils.toIntArray(array.metadata().shape);

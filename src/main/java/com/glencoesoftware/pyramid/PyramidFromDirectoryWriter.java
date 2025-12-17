@@ -92,6 +92,7 @@ import dev.zarr.zarrjava.store.FilesystemStore;
 import dev.zarr.zarrjava.utils.Utils;
 import dev.zarr.zarrjava.v3.Array;
 import dev.zarr.zarrjava.v3.Group;
+import dev.zarr.zarrjava.v3.Node;
 
 /**
  * Writes a pyramid OME-TIFF file or Bio-Formats 5.9.x "Faas" TIFF file.
@@ -995,9 +996,9 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
       return count;
     }
     if (isV3()) {
-      // TODO: handle plate data
       return (int) v3Reader.storeHandle.list()
         .filter(key -> !key.equals("OME") && !key.equals(V3_GROUP_FILE))
+        .filter(key -> isV3Group(key))
         .count();
     }
     Set<String> groupKeys = reader.getGroupKeys();
@@ -1005,6 +1006,16 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
     int groupKeyCount = groupKeys.size();
     LOG.debug("  group key count = {}", groupKeyCount);
     return groupKeyCount;
+  }
+
+  private boolean isV3Group(String... key) {
+    try {
+      return Node.open(v3Reader.storeHandle.resolve(key)) instanceof Group;
+    }
+    catch (ZarrException|IOException e) {
+      LOG.debug("Could not open " + key, e);
+      return false;
+    }
   }
 
   /**
@@ -1175,7 +1186,12 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
           try {
             // if we're skipping the series in the hierarchy,
             // check that there is actually an array at the resolution level
-            ZarrArray.open(inputDirectory.resolve("0"));
+            if (isV3()) {
+              getZarrV3Array("0");
+            }
+            else {
+              ZarrArray.open(inputDirectory.resolve("0"));
+            }
             s.path = "";
           }
           catch (IOException e) {
