@@ -11,6 +11,7 @@ import java.io.File;
 import java.io.IOException;
 import java.lang.reflect.Array;
 import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
 import java.nio.ShortBuffer;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -473,7 +474,10 @@ public class ConversionTest {
       Assert.assertEquals(2, reader.getResolutionCount());
       Assert.assertEquals(240, reader.getOptimalTileWidth());
       Assert.assertEquals(240, reader.getOptimalTileHeight());
-      ShortBuffer plane = ByteBuffer.wrap(reader.openBytes(0)).asShortBuffer();
+      boolean le = reader.isLittleEndian();
+      ByteOrder order = le ? ByteOrder.LITTLE_ENDIAN : ByteOrder.BIG_ENDIAN;
+      ByteBuffer bytes = ByteBuffer.wrap(reader.openBytes(0)).order(order);
+      ShortBuffer plane = bytes.asShortBuffer();
       Assert.assertEquals(512 * 512, plane.capacity());
       int offset = 0;
       for (int y = 0; y < reader.getSizeY(); y++) {
