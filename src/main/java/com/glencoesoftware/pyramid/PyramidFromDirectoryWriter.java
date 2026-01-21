@@ -7,6 +7,7 @@
  */
 package com.glencoesoftware.pyramid;
 
+import java.io.File;
 import java.io.IOException;
 import java.nio.ByteOrder;
 import java.nio.file.Files;
@@ -125,6 +126,7 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
   /** Where to write? */
   Path outputFilePath;
   Path inputDirectory;
+  private volatile boolean overwrite = false;
   private volatile String logLevel;
   private volatile boolean progressBars = false;
   boolean printVersion = false;
@@ -196,6 +198,20 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
     else {
       inputDirectory = null;
     }
+  }
+
+  /**
+   * Set whether or not to overwrite existing OME-TIFF files.
+   *
+   * @param canOverwrite whether or not overwriting is allowed
+   */
+  @Option(
+          names = "--overwrite",
+          description = "Overwrite the output file(s) if they exist",
+          defaultValue = "false"
+  )
+  public void setOverwrite(boolean canOverwrite) {
+    overwrite = canOverwrite;
   }
 
   /**
@@ -435,6 +451,13 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
       return null;
     }
     return inputDirectory.toString();
+  }
+
+  /**
+   * @return true if OME-TIFF files can be overwritten
+   */
+  public boolean getOverwrite() {
+    return overwrite;
   }
 
   /**
@@ -1246,7 +1269,7 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
         String basePath = getOutputPathPrefix();
         // append the series index and file extension
         basePath += "_s";
-        seriesPaths.add(Paths.get(basePath + s.index + ".ome.tiff"));
+        addSeriesPath(Paths.get(basePath + s.index + ".ome.tiff"));
         // generate one UUID per file
         s.uuid.add("urn:uuid:" + UUID.randomUUID().toString());
       }
@@ -1259,7 +1282,7 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
         for (int t=0; t<s.t; t++) {
           for (int c=0; c<effectiveChannels; c++) {
             for (int z=0; z<s.z; z++) {
-              seriesPaths.add(
+              addSeriesPath(
                 Paths.get(basePath + z + "_c" + c + "_t" + t + ".ome.tiff"));
               // generate one UUID per file
               s.uuid.add("urn:uuid:" + UUID.randomUUID().toString());
@@ -1268,7 +1291,7 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
         }
       }
       else {
-        seriesPaths.add(outputFilePath);
+        addSeriesPath(outputFilePath);
         // use the same UUID everywhere since we're only writing one file
         if (seriesIndex == 0) {
           s.uuid.add("urn:uuid:" + UUID.randomUUID().toString());
@@ -1290,6 +1313,11 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
 
       companionPath = getOutputPathPrefix() + ".companion.ome";
       companionUUID = "urn:uuid:" + UUID.randomUUID().toString();
+
+      File companion = new File(companionPath);
+      if (companion.exists()) {
+        handleOverwrite(companion);
+      }
 
       try {
         metadata.setUUID(companionUUID);
@@ -1621,11 +1649,11 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
             s.ifds[0].get(plane).put(IFD.SUB_IFD, subs[s.index][plane]);
             // if splitting by plane, the first IFD is also the last in the file
             if (!splitByPlane) {
-              boolean overwrite = plane < s.planeCount - 1;
+              boolean overwriteIFD = plane < s.planeCount - 1;
               if (!splitBySeries) {
-                overwrite = overwrite || s.index < series.size() - 1;
+                overwriteIFD = overwriteIFD || s.index < series.size() - 1;
               }
-              writeIFD(out, s, 0, plane, overwrite);
+              writeIFD(out, s, 0, plane, overwriteIFD);
             }
             else {
               String planePath = getPathName(s, plane);
@@ -1891,18 +1919,18 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
    * @param s current series
    * @param resolution the resolution index
    * @param plane the plane index
-   * @param overwrite true unless this is the last IFD in the list
+   * @param overwriteIFD true unless this is the last IFD in the list
    */
   private void writeIFD(
     RandomAccessOutputStream outStream,
-    PyramidSeries s, int resolution, int plane, boolean overwrite)
+    PyramidSeries s, int resolution, int plane, boolean overwriteIFD)
     throws FormatException, IOException
   {
     TiffSaver writer = createTiffSaver(outStream, getPathName(s, plane));
     int ifdSize = getIFDSize(s.ifds[resolution].get(plane));
     long offsetPointer = outStream.getFilePointer() + ifdSize;
     writer.writeIFD(s.ifds[resolution].get(plane), 0);
-    if (overwrite) {
+    if (overwriteIFD) {
       overwriteNextOffset(outStream, offsetPointer);
     }
   }
@@ -2095,6 +2123,35 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
         originalMeta.put(prefix.isEmpty() ? key : prefix + " | " + key,
           value.toString());
       }
+    }
+  }
+
+  /**
+   * Add a file path to the list of output files.
+   * If the file already exists and the overwrite option is set,
+   * the existing file will be deleted.
+   * If the file already exists and the overwrite option is not set (default),
+   * then an IOException is thrown.
+   *
+   * @param seriesPath file path to add
+   * @throws IOException if the file already exists and cannot be overwritten
+   */
+  private void addSeriesPath(Path seriesPath) throws IOException {
+    if (seriesPath.toFile().exists()) {
+      handleOverwrite(seriesPath.toFile());
+    }
+
+    seriesPaths.add(seriesPath);
+  }
+
+  private void handleOverwrite(File f) throws IOException {
+    if (getOverwrite()) {
+      LOG.debug("deleting existing file {}", f);
+      f.delete();
+    }
+    else {
+      throw new IOException(
+        "Output file " + f.getAbsolutePath() + " already exists");
     }
   }
 
