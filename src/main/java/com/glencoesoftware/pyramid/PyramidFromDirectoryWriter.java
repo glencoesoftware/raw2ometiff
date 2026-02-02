@@ -955,7 +955,7 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
 
   private int getSubgroupCount(String path) throws IOException {
     if (isV3()) {
-      return (int) v3Store.resolve(path).list()
+      return (int) v3Store.resolve(path).listChildren()
         .filter(key -> !key.equals(V3_GROUP_FILE))
         .count();
     }
@@ -996,7 +996,7 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
       return count;
     }
     if (isV3()) {
-      return (int) v3Reader.storeHandle.list()
+      return (int) v3Reader.storeHandle.listChildren()
         .filter(key -> !key.equals("OME") && !key.equals(V3_GROUP_FILE))
         .filter(key -> isV3Group(key))
         .count();
@@ -1196,7 +1196,8 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
           }
           catch (IOException e) {
             throw new FormatException(
-              "Could not handle series index " + s.index + ". Corrupt input?");
+              "Could not handle series index " + s.index + ". Corrupt input?",
+              e);
           }
         }
         series.set(s.index, s);
