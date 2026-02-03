@@ -832,6 +832,21 @@ public class ConversionTest {
 
     iteratePixels();
     checkRGBIFDs();
+
+    // overwrite the same output OME-TIFF, but with different plane count
+    input = fake("sizeT", "10");
+    assertBioFormats2Raw();
+
+    apiConverter = new PyramidFromDirectoryWriter();
+    cmd = new CommandLine(apiConverter);
+    cmd.parseArgs();
+
+    apiConverter.setInputPath(output.toString());
+    apiConverter.setOutputPath(outputOmeTiff.toString());
+    apiConverter.setOverwrite(true);
+    apiConverter.call();
+
+    iteratePixels();
   }
 
   /**
@@ -1185,6 +1200,151 @@ public class ConversionTest {
     assertBioFormats2Raw("--compact", "--ngff-version", version);
     assertTool();
     iteratePixels();
+  }
+
+  /**
+   * Test writing to an existing OME-TIFF file.
+   */
+  @Test
+  public void testSingleExisting() throws Exception {
+    // run one conversion to make sure file exists
+    input = fake("sizeZ", "3");
+    assertBioFormats2Raw();
+    assertTool();
+    iteratePixels();
+
+    // now run again to make sure conversion fails on existing file
+    try {
+      assertTool();
+    }
+    catch (ExecutionException e) {
+      testException(IOException.class, e);
+      return;
+    }
+    Assert.fail("Did not throw exception on existing file");
+  }
+
+  /**
+   * Test writing to an existing OME-TIFF file, when the "--split"
+   * option was used.
+   */
+  @Test
+  public void testSplitExisting() throws Exception {
+    // run one conversion to make sure files exist
+    input = fake("series", "4");
+    assertBioFormats2Raw();
+    assertTool(4, 4, "--split");
+
+    try (ImageReader reader = new ImageReader()) {
+      reader.setFlattenedResolutions(false);
+      reader.setId(output.resolve("output").toString() + ".companion.ome");
+      iteratePixels(reader);
+    }
+
+    // now run again to make sure conversion fails on existing file
+    try {
+      assertTool(4, 4, "--split");
+    }
+    catch (ExecutionException e) {
+      testException(IOException.class, e);
+      return;
+    }
+    Assert.fail("Did not throw exception on existing file");
+  }
+
+  /**
+   * Test writing to an existing OME-TIFF file, when the "--split-planes"
+   * option was used.
+   */
+  @Test
+  public void testSplitPlanesExisting() throws Exception {
+    // run one conversion to make sure files exist
+    input = fake("sizeZ", "3");
+    assertBioFormats2Raw();
+    assertTool(1, 3, "--split-planes");
+
+    try (ImageReader reader = new ImageReader()) {
+      reader.setFlattenedResolutions(false);
+      reader.setId(output.resolve("output").toString() + ".companion.ome");
+      iteratePixels(reader);
+    }
+
+    // now run again to make sure conversion fails on existing file
+    try {
+      assertTool(1, 3, "--split-planes");
+    }
+    catch (ExecutionException e) {
+      testException(IOException.class, e);
+      return;
+    }
+    Assert.fail("Did not throw exception on existing file");
+  }
+
+  /**
+   * Test overwriting an existing OME-TIFF file.
+   */
+  @Test
+  public void testSingleOverwrite() throws Exception {
+    // run one conversion to make sure file exists
+    input = fake("sizeZ", "3");
+    assertBioFormats2Raw();
+    assertTool();
+    iteratePixels();
+
+    assertTool("--overwrite");
+    iteratePixels();
+  }
+
+  /**
+   * Test overwriting an existing OME-TIFF file,
+   * when the "--split" option was used.
+   */
+  @Test
+  public void testSplitOverwrite() throws Exception {
+    // run one conversion to make sure files exist
+    input = fake("series", "4");
+    assertBioFormats2Raw();
+    assertTool(4, 4, "--split");
+
+    try (ImageReader reader = new ImageReader()) {
+      reader.setFlattenedResolutions(false);
+      reader.setId(output.resolve("output").toString() + ".companion.ome");
+      iteratePixels(reader);
+    }
+
+    assertTool(4, 4, "--split", "--overwrite");
+
+    try (ImageReader reader = new ImageReader()) {
+      reader.setFlattenedResolutions(false);
+      reader.setId(output.resolve("output").toString() + ".companion.ome");
+      iteratePixels(reader);
+    }
+  }
+
+  /**
+   * Test overwriting an existing OME-TIFF file,
+   * when the "--split" option was used.
+   */
+  @Test
+  public void testSplitPlanesOverwrite() throws Exception {
+    // run one conversion to make sure files exist
+    input = fake("sizeZ", "3");
+    assertBioFormats2Raw();
+    assertTool(1, 3, "--split-planes");
+
+    try (ImageReader reader = new ImageReader()) {
+      reader.setFlattenedResolutions(false);
+      reader.setId(output.resolve("output").toString() + ".companion.ome");
+      iteratePixels(reader);
+    }
+
+    assertTool(1, 3, "--split-planes", "--overwrite");
+
+    try (ImageReader reader = new ImageReader()) {
+      reader.setFlattenedResolutions(false);
+      reader.setId(output.resolve("output").toString() + ".companion.ome");
+      iteratePixels(reader);
+    }
   }
 
   private void checkRGBIFDs() throws FormatException, IOException {
