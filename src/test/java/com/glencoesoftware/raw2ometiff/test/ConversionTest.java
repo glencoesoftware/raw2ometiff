@@ -832,7 +832,8 @@ public class ConversionTest {
 
     // overwrite the same output OME-TIFF, but with different plane count
     input = fake("sizeT", "10");
-    assertBioFormats2Raw();
+    output = output.resolve("second-test");
+    assertBioFormats2Raw("--ngff-version", version);
 
     apiConverter = new PyramidFromDirectoryWriter();
     cmd = new CommandLine(apiConverter);
