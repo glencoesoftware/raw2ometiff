@@ -82,6 +82,9 @@ public class ConversionTest {
   @BeforeEach
   public void setup(@TempDir Path tmp) throws Exception {
     output = tmp.resolve("test");
+    if (output.toFile().exists()) {
+      output = output.resolve(String.valueOf(System.nanoTime()));
+    }
   }
 
   static Stream<Arguments> getVersions() {
