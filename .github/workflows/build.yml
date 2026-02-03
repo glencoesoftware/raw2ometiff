@@ -31,6 +31,13 @@ jobs:
       - name: Run commands
         run: |
           ./gradlew ${{ env.gradle_commands }}
+      - name: Upload test report on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: raw2ometiff-test-logs ${{ matrix.java }}
+          path: build/reports/*
+          retention-days: 1
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
