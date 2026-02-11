@@ -18,18 +18,12 @@ import loci.formats.tiff.IFDList;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-// Zarr v2
-
-import com.bc.zarr.ZarrArray;
-import com.bc.zarr.ZarrGroup;
-
-// Zarr v3
-
 import dev.zarr.zarrjava.ZarrException;
+import dev.zarr.zarrjava.core.Array;
+import dev.zarr.zarrjava.core.Attributes;
+import dev.zarr.zarrjava.core.Group;
 import dev.zarr.zarrjava.store.FilesystemStore;
 import dev.zarr.zarrjava.utils.Utils;
-import dev.zarr.zarrjava.v3.Array;
-import dev.zarr.zarrjava.v3.Group;
 
 public class PyramidSeries {
 
@@ -131,22 +125,33 @@ public class PyramidSeries {
   }
 
  /**
-   * Calculate image width and height for each resolution, for v3 input.
+   * Calculate image width and height for each resolution.
    * Uses the first tile in the resolution to find the tile size.
    *
-   * @param v3 store used to get dataset attributes
+   * @param store store used to get dataset attributes
    * @param metadata additional OME-XML metadata
    */
-  public void describePyramidV3(FilesystemStore v3, OMEPyramidStore metadata)
+  public void describePyramid(FilesystemStore store, OMEPyramidStore metadata)
     throws FormatException, IOException
   {
     LOG.info("Number of resolution levels: {}", numberOfResolutions);
 
-    Group subgroup = Group.open(v3.resolve(path));
-    Map<String, Object> ome =
-      (Map<String, Object>) subgroup.metadata.attributes.get("ome");
-    List<Map<String, Object>> multiscales =
-      (List<Map<String, Object>>) ome.get("multiscales");
+    List<Map<String, Object>> multiscales = null;
+
+    try {
+      Group subgroup = Group.open(store.resolve(path));
+      Attributes attrs = subgroup.metadata().attributes();
+      if (subgroup instanceof dev.zarr.zarrjava.v3.Group) {
+        Attributes ome = attrs.getAttributes("ome");
+        multiscales = (List<Map<String, Object>>) ome.get("multiscales");
+      }
+      else {
+        multiscales = (List<Map<String, Object>>) attrs.get("multiscales");
+      }
+    }
+    catch (ZarrException e) {
+      throw new FormatException(e);
+    }
 
     parseMultiscales(multiscales);
 
@@ -158,7 +163,7 @@ public class PyramidSeries {
         descriptor.path = path + "/" + descriptor.path;
       }
       try {
-        Array array = Array.open(v3.resolve(descriptor.path));
+        Array array = Array.open(store.resolve(descriptor.path));
         int[] shape = Utils.toIntArray(array.metadata().shape);
         int[] chunk = array.metadata().chunkShape();
         setupResolution(descriptor, resolution, shape, chunk, metadata);
@@ -166,35 +171,6 @@ public class PyramidSeries {
       catch (ZarrException e) {
         throw new FormatException(e);
       }
-      resolutions.add(descriptor);
-    }
-  }
-
-  /**
-   * Calculate image width and height for each resolution, for v2 input.
-   * Uses the first tile in the resolution to find the tile size.
-   *
-   * @param reader reader used to get dataset attributes
-   * @param metadata additional OME-XML metadata
-   */
-  public void describePyramid(ZarrGroup reader, OMEPyramidStore metadata)
-    throws FormatException, IOException
-  {
-    LOG.info("Number of resolution levels: {}", numberOfResolutions);
-
-    List<Map<String, Object>> multiscales =
-      (List<Map<String, Object>>) reader.openSubGroup(path).getAttributes().get(
-      "multiscales");
-    parseMultiscales(multiscales);
-
-    resolutions = new ArrayList<ResolutionDescriptor>();
-    for (int resolution = 0; resolution < numberOfResolutions; resolution++) {
-      ResolutionDescriptor descriptor = new ResolutionDescriptor();
-      descriptor.path = path + "/" + resolution;
-      ZarrArray array = reader.openArray(descriptor.path);
-      int[] dimensions = array.getShape();
-      int[] blockSizes = array.getChunks();
-      setupResolution(descriptor, resolution, dimensions, blockSizes, metadata);
       resolutions.add(descriptor);
     }
   }
