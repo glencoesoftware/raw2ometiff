@@ -118,6 +118,8 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
   private static final String OMEXML_FILE = "METADATA.ome.xml";
 
   private static final String V3_GROUP_FILE = "zarr.json";
+  private static final String V2_GROUP_FILE = ".zgroup";
+  private static final String V2_ATTRS_FILE = ".zattrs";
 
   private static final Logger LOG =
     LoggerFactory.getLogger(PyramidFromDirectoryWriter.class);
@@ -925,6 +927,8 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
   {
     return (int) store.resolve(path).listChildren()
       .filter(key -> !key.equals(V3_GROUP_FILE))
+      .filter(key -> !key.equals(V2_GROUP_FILE))
+      .filter(key -> !key.equals(V2_ATTRS_FILE))
       .count();
   }
 
@@ -981,11 +985,13 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
     }
     return (int) reader.storeHandle.listChildren()
       .filter(key -> !key.equals("OME") && !key.equals(V3_GROUP_FILE))
-      .filter(key -> isV3Group(key))
+      .filter(key -> !key.equals(V2_GROUP_FILE))
+      .filter(key -> !key.equals(V2_ATTRS_FILE))
+      .filter(key -> isGroup(key))
       .count();
   }
 
-  private boolean isV3Group(String... key) {
+  private boolean isGroup(String... key) {
     try {
       return Node.open(reader.storeHandle.resolve(key)) instanceof Group;
     }
@@ -1117,6 +1123,7 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
     }
 
     int seriesCount = getSeriesCount();
+    LOG.debug("seriesCount = {}", seriesCount);
 
     boolean flatHierarchy = false;
     if (seriesCount < 1) {
