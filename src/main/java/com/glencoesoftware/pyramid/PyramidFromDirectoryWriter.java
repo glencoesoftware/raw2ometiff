@@ -718,7 +718,9 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
         ", position = [" + pos[0] + ", " + pos[1] + ", " + pos[2] + "]");
     }
     try {
-      ucar.ma2.Array tile = block.read(Utils.toLongArray(gridPosition), shape);
+      ucar.ma2.Array tile = block.read(
+        Utils.toLongArray(gridPosition),
+        Utils.toLongArray(shape));
       ByteBuffer buf = tile.getDataAsByteBuffer(
         s.littleEndian ? ByteOrder.LITTLE_ENDIAN : ByteOrder.BIG_ENDIAN);
       byte[] bytes = new byte[buf.remaining()];
