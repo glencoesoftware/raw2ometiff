@@ -1028,8 +1028,7 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
       if (seriesGroup == null) {
         throw new IOException("Expected series " + s.index + " not found");
       }
-      // TODO ??
-      //arrayKeys = seriesGroup.getArrayKeys().size();
+      arrayKeys = getSubgroupCount(s.path);
 
       multiscales = (List<Map<String, Object>>)
         getGroupAttributes(seriesGroup).get("multiscales");
@@ -1045,6 +1044,9 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
       if (datasets != null) {
         s.numberOfResolutions = datasets.size();
       }
+    }
+    else {
+      LOG.warn("Multiscales metadata not found");
     }
 
     if (s.numberOfResolutions == 0) {
