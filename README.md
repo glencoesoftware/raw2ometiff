@@ -27,6 +27,8 @@ Installation
 Development Installation
 ========================
 
+As of 0.10.0, Java 17 is required to build raw2ometiff.
+
 1. Clone the repository:
 
     git clone git@github.com:glencoesoftware/raw2ometiff.git
