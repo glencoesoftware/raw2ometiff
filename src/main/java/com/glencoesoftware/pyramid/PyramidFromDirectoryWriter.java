@@ -1016,18 +1016,15 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
     List<Map<String, Object>> multiscales = null;
 
     Group seriesGroup = getZarrGroup(s.path);
-    if (isV3()) {
-      if (seriesGroup == null) {
-        throw new IOException("Expected series " + s.index + " not found");
-      }
+    if (seriesGroup == null) {
+      throw new IOException("Expected series " + s.index + " not found");
+    }
 
+    if (isV3()) {
       Attributes ome = getGroupAttributes(seriesGroup).getAttributes("ome");
       multiscales = (List<Map<String, Object>>) ome.get("multiscales");
     }
     else {
-      if (seriesGroup == null) {
-        throw new IOException("Expected series " + s.index + " not found");
-      }
       arrayKeys = getSubgroupCount(s.path);
 
       multiscales = (List<Map<String, Object>>)
