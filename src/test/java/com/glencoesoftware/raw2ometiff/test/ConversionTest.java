@@ -22,8 +22,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.stream.Stream;
 
-import com.bc.zarr.ZarrArray;
-import com.bc.zarr.ZarrGroup;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.glencoesoftware.bioformats2raw.Converter;
@@ -49,15 +47,20 @@ import picocli.CommandLine.ExecutionException;
 
 import org.apache.commons.lang3.SystemUtils;
 
-import org.junit.Assert;
-import org.junit.Assume;
-
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
+
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.fail;
+import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 public class ConversionTest {
 
@@ -109,12 +112,12 @@ public class ConversionTest {
       converter = new Converter();
       CommandLine.call(converter, args.toArray(new String[]{}));
       if (args.contains(V3_ARGUMENT)) {
-        Assert.assertTrue(Files.exists(output.resolve("zarr.json")));
+        assertTrue(Files.exists(output.resolve("zarr.json")));
       }
       else {
-        Assert.assertTrue(Files.exists(output.resolve(".zattrs")));
+        assertTrue(Files.exists(output.resolve(".zattrs")));
       }
-      Assert.assertTrue(Files.exists(
+      assertTrue(Files.exists(
         output.resolve("OME").resolve("METADATA.ome.xml")));
     }
     catch (RuntimeException rt) {
@@ -157,25 +160,25 @@ public class ConversionTest {
       writer = new PyramidFromDirectoryWriter();
       CommandLine.call(writer, args.toArray(new String[]{}));
       if (fileCount == 0) {
-        Assert.assertTrue(Files.exists(outputOmeTiff));
+        assertTrue(Files.exists(outputOmeTiff));
       }
       else if (seriesCount == fileCount) {
         String prefix = output.resolve("output").toString();
         for (int i=0; i<fileCount; i++) {
-          Assert.assertTrue(Files.exists(
+          assertTrue(Files.exists(
             Paths.get(prefix + "_s" + i + ".ome.tiff")));
         }
-        Assert.assertFalse(Files.exists(
+        assertFalse(Files.exists(
             Paths.get(prefix + "_s" +
             fileCount + ".ome.tiff")));
       }
       else {
         String prefix = output.resolve("output").toString();
         for (int i=0; i<seriesCount; i++) {
-          Assert.assertTrue(Files.exists(
+          assertTrue(Files.exists(
             Paths.get(prefix + "_s" + i + "_z0_c0_t0.ome.tiff")));
         }
-        Assert.assertFalse(Files.exists(Paths.get(prefix + "_s0.ome.tiff")));
+        assertFalse(Files.exists(Paths.get(prefix + "_s0.ome.tiff")));
       }
     }
     catch (RuntimeException rt) {
@@ -187,7 +190,7 @@ public class ConversionTest {
   }
 
   static Path fake(String...args) {
-    Assert.assertTrue(args.length %2 == 0);
+    assertTrue(args.length %2 == 0);
     Map<String, String> options = new HashMap<String, String>();
     for (int i = 0; i < args.length; i += 2) {
       options.put(args[i], args[i+1]);
@@ -291,18 +294,18 @@ public class ConversionTest {
         inputReader.setSeries(series);
         outputReader.setSeries(series);
 
-        Assert.assertEquals(
+        assertEquals(
           inputReader.getImageCount(), outputReader.getImageCount());
-        Assert.assertEquals(inputReader.getSizeC(), outputReader.getSizeC());
+        assertEquals(inputReader.getSizeC(), outputReader.getSizeC());
         for (int plane=0; plane<inputReader.getImageCount(); plane++) {
           Object inputPlane = getPlane(inputReader, plane);
           Object outputPlane = getPlane(outputReader, plane);
 
           int inputLength = Array.getLength(inputPlane);
           int outputLength = Array.getLength(outputPlane);
-          Assert.assertEquals(inputLength, outputLength);
+          assertEquals(inputLength, outputLength);
           for (int px=0; px<inputLength; px++) {
-            Assert.assertEquals(
+            assertEquals(
                 Array.get(inputPlane, px), Array.get(outputPlane, px));
           }
         }
@@ -327,36 +330,38 @@ public class ConversionTest {
   }
 
   private void assertDefaults(String version) throws Exception {
+    FilesystemStore store = new FilesystemStore(output);
+    dev.zarr.zarrjava.core.Array series0 =
+      dev.zarr.zarrjava.core.Array.open(store.resolve("0/0"));
+
     if (version.equals(V2_ARGUMENT)) {
-      ZarrArray series0 = ZarrGroup.open(output.resolve("0")).openArray("0");
-      // no getter for DimensionSeparator in ZarrArray
       // check that the correct separator was used by checking
       // that the expected first chunk file exists
-      Assert.assertTrue(output.resolve("0/0/0/0/0/0/0").toFile().exists());
+      assertTrue(output.resolve("0/0/0/0/0/0/0").toFile().exists());
       // Also ensure we're using the latest .zarray metadata
       ObjectMapper objectMapper = new ObjectMapper();
       JsonNode root = objectMapper.readTree(
           output.resolve("0/0/.zarray").toFile());
-      Assert.assertEquals("/", root.path("dimension_separator").asText());
+      assertEquals("/", root.path("dimension_separator").asText());
+      assertTrue(series0 instanceof dev.zarr.zarrjava.v2.Array);
     }
     else if (version.equals(V3_ARGUMENT)) {
-      Assert.assertTrue(output.resolve("0/0/c/0/0/0/0/0").toFile().exists());
+      assertTrue(output.resolve("0/0/c/0/0/0/0/0").toFile().exists());
 
-      FilesystemStore store = new FilesystemStore(output);
-      dev.zarr.zarrjava.v3.Array series0 =
-        dev.zarr.zarrjava.v3.Array.open(store.resolve("0/0"));
-      ArrayMetadata metadata = series0.metadata();
+      assertTrue(series0 instanceof dev.zarr.zarrjava.v3.Array);
+      ArrayMetadata metadata =
+        ((dev.zarr.zarrjava.v3.Array) series0).metadata();
 
       DefaultChunkKeyEncoding encoding =
         (DefaultChunkKeyEncoding) metadata.chunkKeyEncoding;
-      Assert.assertEquals("/",
+      assertEquals("/",
         encoding.configuration.separator.getValue());
-      Assert.assertEquals(3, metadata.zarrFormat);
+      assertEquals(3, metadata.zarrFormat);
     }
     try (ImageReader reader = new ImageReader()) {
       reader.setFlattenedResolutions(false);
       reader.setId(outputOmeTiff.toString());
-      Assert.assertEquals(2, reader.getResolutionCount());
+      assertEquals(2, reader.getResolutionCount());
     }
     iteratePixels();
   }
@@ -383,7 +388,7 @@ public class ConversionTest {
   @ParameterizedTest
   @MethodSource("getVersions")
   public void testSymlinkAsRoot(String version) throws Exception {
-    Assume.assumeTrue(SystemUtils.IS_OS_LINUX);
+    assumeTrue(SystemUtils.IS_OS_LINUX);
     input = fake();
     assertBioFormats2Raw("--ngff-version", version);
     Path notASymlink = output.resolveSibling(output.getFileName() + ".old");
@@ -416,7 +421,7 @@ public class ConversionTest {
       testException(FormatException.class, e);
       return;
     }
-    Assert.fail("Did not throw exception on invalid data");
+    fail("Did not throw exception on invalid data");
   }
 
   /**
@@ -433,22 +438,22 @@ public class ConversionTest {
     try (ImageReader reader = new ImageReader()) {
       reader.setFlattenedResolutions(false);
       reader.setId(outputOmeTiff.toString());
-      Assert.assertEquals(2, reader.getResolutionCount());
-      Assert.assertEquals(240, reader.getOptimalTileWidth());
-      Assert.assertEquals(240, reader.getOptimalTileHeight());
+      assertEquals(2, reader.getResolutionCount());
+      assertEquals(240, reader.getOptimalTileWidth());
+      assertEquals(240, reader.getOptimalTileHeight());
       ByteBuffer plane = ByteBuffer.wrap(reader.openBytes(0));
-      Assert.assertEquals(512 * 512, plane.capacity());
+      assertEquals(512 * 512, plane.capacity());
       int offset = 0;
       for (int y = 0; y < reader.getSizeY(); y++) {
         offset = (y * 512) + 511;
-        Assert.assertEquals(255, Byte.toUnsignedInt(plane.get(offset)));
+        assertEquals(255, Byte.toUnsignedInt(plane.get(offset)));
       }
     }
     try (TiffParser tiffParser = new TiffParser(outputOmeTiff.toString())) {
       IFDList mainIFDs = tiffParser.getMainIFDs();
-      Assert.assertEquals(1, mainIFDs.size());
+      assertEquals(1, mainIFDs.size());
       int tileSize = 240 * 240;
-      Assert.assertArrayEquals(new long[] {
+      assertArrayEquals(new long[] {
         tileSize, tileSize, tileSize,  // Row 1
         tileSize, tileSize, tileSize,  // Row 2
         tileSize, tileSize, tileSize   // Row 3
@@ -471,25 +476,25 @@ public class ConversionTest {
     try (ImageReader reader = new ImageReader()) {
       reader.setFlattenedResolutions(false);
       reader.setId(outputOmeTiff.toString());
-      Assert.assertEquals(2, reader.getResolutionCount());
-      Assert.assertEquals(240, reader.getOptimalTileWidth());
-      Assert.assertEquals(240, reader.getOptimalTileHeight());
+      assertEquals(2, reader.getResolutionCount());
+      assertEquals(240, reader.getOptimalTileWidth());
+      assertEquals(240, reader.getOptimalTileHeight());
       boolean le = reader.isLittleEndian();
       ByteOrder order = le ? ByteOrder.LITTLE_ENDIAN : ByteOrder.BIG_ENDIAN;
       ByteBuffer bytes = ByteBuffer.wrap(reader.openBytes(0)).order(order);
       ShortBuffer plane = bytes.asShortBuffer();
-      Assert.assertEquals(512 * 512, plane.capacity());
+      assertEquals(512 * 512, plane.capacity());
       int offset = 0;
       for (int y = 0; y < reader.getSizeY(); y++) {
         offset = (y * 512) + 511;
-        Assert.assertEquals(511, Short.toUnsignedInt(plane.get(offset)));
+        assertEquals(511, Short.toUnsignedInt(plane.get(offset)));
       }
     }
     try (TiffParser tiffParser = new TiffParser(outputOmeTiff.toString())) {
       IFDList mainIFDs = tiffParser.getMainIFDs();
-      Assert.assertEquals(1, mainIFDs.size());
+      assertEquals(1, mainIFDs.size());
       int tileSize = 240 * 240 * 2;
-      Assert.assertArrayEquals(new long[] {
+      assertArrayEquals(new long[] {
         tileSize, tileSize, tileSize,  // Row 1
         tileSize, tileSize, tileSize,  // Row 2
         tileSize, tileSize, tileSize   // Row 3
@@ -513,12 +518,12 @@ public class ConversionTest {
 
     try (TiffParser parser = new TiffParser(outputOmeTiff.toString())) {
       IFDList mainIFDs = parser.getMainIFDs();
-      Assert.assertEquals(1, mainIFDs.size());
+      assertEquals(1, mainIFDs.size());
       int tileSize = 32 * 32 * 2;
       long[] tileByteCounts = mainIFDs.get(0).getStripByteCounts();
-      Assert.assertEquals(256, tileByteCounts.length);
+      assertEquals(256, tileByteCounts.length);
       for (long count : tileByteCounts) {
-        Assert.assertEquals(tileSize, count);
+        assertEquals(tileSize, count);
       }
     }
   }
@@ -556,9 +561,9 @@ public class ConversionTest {
       reader.setMetadataStore(metadata);
       reader.setFlattenedResolutions(false);
       reader.setId(outputOmeTiff.toString());
-      Assert.assertEquals(
+      assertEquals(
           3, metadata.getPixelsSizeC(0).getNumberValue());
-      Assert.assertEquals(1, metadata.getChannelCount(0));
+      assertEquals(1, metadata.getChannelCount(0));
 
       checkRGBChannel(metadata, 0, 0);
     }
@@ -584,9 +589,9 @@ public class ConversionTest {
       reader.setMetadataStore(metadata);
       reader.setFlattenedResolutions(false);
       reader.setId(outputOmeTiff.toString());
-      Assert.assertEquals(
+      assertEquals(
           12, metadata.getPixelsSizeC(0).getNumberValue());
-      Assert.assertEquals(4, metadata.getChannelCount(0));
+      assertEquals(4, metadata.getChannelCount(0));
 
       for (int c=0; c<metadata.getChannelCount(0); c++) {
         checkRGBChannel(metadata, 0, c);
@@ -623,9 +628,9 @@ public class ConversionTest {
       reader.setMetadataStore(metadata);
       reader.setFlattenedResolutions(false);
       reader.setId(outputOmeTiff.toString());
-      Assert.assertEquals(
+      assertEquals(
           3, metadata.getPixelsSizeC(0).getNumberValue());
-      Assert.assertEquals(1, metadata.getChannelCount(0));
+      assertEquals(1, metadata.getChannelCount(0));
       checkRGBChannel(metadata, 0, 0);
     }
     checkRGBIFDs();
@@ -645,10 +650,10 @@ public class ConversionTest {
 
     try (TiffParser parser = new TiffParser(outputOmeTiff.toString())) {
       IFDList mainIFDs = parser.getMainIFDs();
-      Assert.assertEquals(1, mainIFDs.size());
+      assertEquals(1, mainIFDs.size());
       IFD ifd = mainIFDs.get(0);
-      Assert.assertEquals(ifd.getXResolution(), 0.5, 0.0001);
-      Assert.assertEquals(ifd.getYResolution(), 0.6, 0.0001);
+      assertEquals(ifd.getXResolution(), 0.5, 0.0001);
+      assertEquals(ifd.getYResolution(), 0.6, 0.0001);
     }
   }
 
@@ -672,9 +677,9 @@ public class ConversionTest {
       reader.setMetadataStore(metadata);
       reader.setFlattenedResolutions(false);
       reader.setId(outputOmeTiff.toString());
-      Assert.assertEquals(24, reader.getSeriesCount());
-      Assert.assertEquals(24, metadata.getImageCount());
-      Assert.assertEquals(1, metadata.getPlateCount());
+      assertEquals(24, reader.getSeriesCount());
+      assertEquals(24, metadata.getImageCount());
+      assertEquals(1, metadata.getPlateCount());
     }
   }
 
@@ -698,9 +703,9 @@ public class ConversionTest {
       reader.setMetadataStore(metadata);
       reader.setFlattenedResolutions(false);
       reader.setId(outputOmeTiff.toString());
-      Assert.assertEquals(1, reader.getSeriesCount());
-      Assert.assertEquals(1, metadata.getImageCount());
-      Assert.assertEquals(0, metadata.getPlateCount());
+      assertEquals(1, reader.getSeriesCount());
+      assertEquals(1, metadata.getImageCount());
+      assertEquals(0, metadata.getPlateCount());
     }
   }
 
@@ -728,10 +733,10 @@ public class ConversionTest {
       // with BinaryOnly OME-TIFFs
       reader.setId(output.resolve("output").toString() + ".companion.ome");
 
-      Assert.assertEquals(reader.getUsedFiles().length, 25);
-      Assert.assertEquals(reader.getSeriesCount(), 24);
-      Assert.assertEquals(1, metadata.getPlateCount());
-      Assert.assertEquals(24, metadata.getImageCount());
+      assertEquals(reader.getUsedFiles().length, 25);
+      assertEquals(reader.getSeriesCount(), 24);
+      assertEquals(1, metadata.getPlateCount());
+      assertEquals(24, metadata.getImageCount());
 
       iteratePixels(reader);
     }
@@ -761,10 +766,10 @@ public class ConversionTest {
       // with BinaryOnly OME-TIFFs
       reader.setId(output.resolve("output").toString() + ".companion.ome");
 
-      Assert.assertEquals(reader.getUsedFiles().length, 73);
-      Assert.assertEquals(reader.getSeriesCount(), 24);
-      Assert.assertEquals(1, metadata.getPlateCount());
-      Assert.assertEquals(24, metadata.getImageCount());
+      assertEquals(reader.getUsedFiles().length, 73);
+      assertEquals(reader.getSeriesCount(), 24);
+      assertEquals(1, metadata.getPlateCount());
+      assertEquals(24, metadata.getImageCount());
 
       iteratePixels(reader);
     }
@@ -796,10 +801,10 @@ public class ConversionTest {
       // with BinaryOnly OME-TIFFs
       reader.setId(output.resolve("output").toString() + ".companion.ome");
 
-      Assert.assertEquals(reader.getUsedFiles().length, 73);
-      Assert.assertEquals(reader.getSeriesCount(), 24);
-      Assert.assertEquals(1, metadata.getPlateCount());
-      Assert.assertEquals(24, metadata.getImageCount());
+      assertEquals(reader.getUsedFiles().length, 73);
+      assertEquals(reader.getSeriesCount(), 24);
+      assertEquals(1, metadata.getPlateCount());
+      assertEquals(24, metadata.getImageCount());
 
       iteratePixels(reader);
     }
@@ -865,12 +870,12 @@ public class ConversionTest {
     CommandLine cmd = new CommandLine(apiConverter);
     cmd.parseArgs();
 
-    Assert.assertEquals(apiConverter.getInputPath(), null);
-    Assert.assertEquals(apiConverter.getOutputPath(), null);
-    Assert.assertEquals(apiConverter.getCompression(), CompressionType.LZW);
-    Assert.assertEquals(apiConverter.getRGB(), false);
-    Assert.assertEquals(apiConverter.getLegacyTIFF(), false);
-    Assert.assertEquals(apiConverter.getSplitTIFFs(), false);
+    assertEquals(apiConverter.getInputPath(), null);
+    assertEquals(apiConverter.getOutputPath(), null);
+    assertEquals(apiConverter.getCompression(), CompressionType.LZW);
+    assertEquals(apiConverter.getRGB(), false);
+    assertEquals(apiConverter.getLegacyTIFF(), false);
+    assertEquals(apiConverter.getSplitTIFFs(), false);
 
     // override default options, as though to start a conversion
     apiConverter.setInputPath(output.toString());
@@ -881,12 +886,12 @@ public class ConversionTest {
     // change our minds and reset the options to defaults again
     cmd.parseArgs();
 
-    Assert.assertEquals(apiConverter.getInputPath(), null);
-    Assert.assertEquals(apiConverter.getOutputPath(), null);
-    Assert.assertEquals(apiConverter.getCompression(), CompressionType.LZW);
-    Assert.assertEquals(apiConverter.getRGB(), false);
-    Assert.assertEquals(apiConverter.getLegacyTIFF(), false);
-    Assert.assertEquals(apiConverter.getSplitTIFFs(), false);
+    assertEquals(apiConverter.getInputPath(), null);
+    assertEquals(apiConverter.getOutputPath(), null);
+    assertEquals(apiConverter.getCompression(), CompressionType.LZW);
+    assertEquals(apiConverter.getRGB(), false);
+    assertEquals(apiConverter.getLegacyTIFF(), false);
+    assertEquals(apiConverter.getSplitTIFFs(), false);
 
     // update options, make sure they were set, and actually convert
     apiConverter.setInputPath(output.toString());
@@ -894,11 +899,11 @@ public class ConversionTest {
     apiConverter.setCompression(CompressionType.UNCOMPRESSED);
     apiConverter.setRGB(true);
 
-    Assert.assertEquals(apiConverter.getInputPath(), output.toString());
-    Assert.assertEquals(apiConverter.getOutputPath(), outputOmeTiff.toString());
-    Assert.assertEquals(apiConverter.getCompression(),
+    assertEquals(apiConverter.getInputPath(), output.toString());
+    assertEquals(apiConverter.getOutputPath(), outputOmeTiff.toString());
+    assertEquals(apiConverter.getCompression(),
       CompressionType.UNCOMPRESSED);
-    Assert.assertEquals(apiConverter.getRGB(), true);
+    assertEquals(apiConverter.getRGB(), true);
 
     apiConverter.call();
 
@@ -920,8 +925,8 @@ public class ConversionTest {
     try (ImageReader reader = new ImageReader()) {
       reader.setFlattenedResolutions(false);
       reader.setId(outputOmeTiff.toString());
-      Assert.assertEquals(1, reader.getSeriesCount());
-      Assert.assertEquals(3, reader.getRGBChannelCount());
+      assertEquals(1, reader.getSeriesCount());
+      assertEquals(3, reader.getRGBChannelCount());
     }
     checkRGBIFDs();
   }
@@ -972,7 +977,7 @@ public class ConversionTest {
       testException(FormatException.class, e);
       return;
     }
-    Assert.fail("Did not throw exception on invalid data");
+    fail("Did not throw exception on invalid data");
   }
 
   /**
@@ -995,7 +1000,7 @@ public class ConversionTest {
       testException(FormatException.class, e);
       return;
     }
-    Assert.fail("Did not throw exception on invalid data");
+    fail("Did not throw exception on invalid data");
   }
 
   /**
@@ -1018,7 +1023,7 @@ public class ConversionTest {
       testException(FormatException.class, e);
       return;
     }
-    Assert.fail("Did not throw exception on invalid data");
+    fail("Did not throw exception on invalid data");
   }
 
   /**
@@ -1105,9 +1110,8 @@ public class ConversionTest {
       reader.setMetadataStore(metadata);
       reader.setFlattenedResolutions(false);
       reader.setId(outputOmeTiff.toString());
-      Assert.assertEquals(
-          3, metadata.getPixelsSizeC(0).getNumberValue());
-      Assert.assertEquals(1, metadata.getChannelCount(0));
+      assertEquals(3, metadata.getPixelsSizeC(0).getNumberValue());
+      assertEquals(1, metadata.getChannelCount(0));
       checkRGBChannel(metadata, 0, 0);
     }
     checkRGBIFDs();
@@ -1134,9 +1138,8 @@ public class ConversionTest {
       reader.setMetadataStore(metadata);
       reader.setFlattenedResolutions(false);
       reader.setId(outputOmeTiff.toString());
-      Assert.assertEquals(
-          3, metadata.getPixelsSizeC(0).getNumberValue());
-      Assert.assertEquals(1, metadata.getChannelCount(0));
+      assertEquals(3, metadata.getPixelsSizeC(0).getNumberValue());
+      assertEquals(1, metadata.getChannelCount(0));
 
       checkRGBChannel(metadata, 0, 0);
     }
@@ -1219,7 +1222,7 @@ public class ConversionTest {
       testException(IOException.class, e);
       return;
     }
-    Assert.fail("Did not throw exception on existing file");
+    fail("Did not throw exception on existing file");
   }
 
   /**
@@ -1247,7 +1250,7 @@ public class ConversionTest {
       testException(IOException.class, e);
       return;
     }
-    Assert.fail("Did not throw exception on existing file");
+    fail("Did not throw exception on existing file");
   }
 
   /**
@@ -1275,7 +1278,7 @@ public class ConversionTest {
       testException(IOException.class, e);
       return;
     }
-    Assert.fail("Did not throw exception on existing file");
+    fail("Did not throw exception on existing file");
   }
 
   /**
@@ -1349,25 +1352,25 @@ public class ConversionTest {
     try (TiffParser parser = new TiffParser(outputOmeTiff.toString())) {
       IFDList mainIFDs = parser.getMainIFDs();
       for (IFD ifd : mainIFDs) {
-        Assert.assertEquals(1, ifd.getPlanarConfiguration());
-        Assert.assertEquals(3, ifd.getSamplesPerPixel());
+        assertEquals(1, ifd.getPlanarConfiguration());
+        assertEquals(3, ifd.getSamplesPerPixel());
 
         IFDList subresolutions = parser.getSubIFDs(ifd);
         for (IFD subres : subresolutions) {
-          Assert.assertEquals(1, subres.getPlanarConfiguration());
-          Assert.assertEquals(3, ifd.getSamplesPerPixel());
+          assertEquals(1, subres.getPlanarConfiguration());
+          assertEquals(3, ifd.getSamplesPerPixel());
         }
       }
     }
   }
 
   private void checkRGBChannel(OMEXMLMetadata metadata, int image, int c) {
-    Assert.assertEquals(
+    assertEquals(
         3, metadata.getChannelSamplesPerPixel(image, c).getNumberValue());
-    Assert.assertNull(metadata.getChannelColor(image, c));
-    Assert.assertNull(metadata.getChannelEmissionWavelength(image, c));
-    Assert.assertNull(metadata.getChannelExcitationWavelength(image, c));
-    Assert.assertNull(metadata.getChannelName(image, c));
+    assertNull(metadata.getChannelColor(image, c));
+    assertNull(metadata.getChannelEmissionWavelength(image, c));
+    assertNull(metadata.getChannelExcitationWavelength(image, c));
+    assertNull(metadata.getChannelName(image, c));
   }
 
   /**
@@ -1379,7 +1382,7 @@ public class ConversionTest {
    * @param e exception that was thrown
    */
   private void testException(Class cause, Exception e) {
-    Assert.assertEquals(cause, e.getCause().getCause().getClass());
+    assertEquals(cause, e.getCause().getCause().getClass());
   }
 
 }
