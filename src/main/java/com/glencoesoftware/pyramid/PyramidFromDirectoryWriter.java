@@ -881,18 +881,24 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
       case INT8:
         return PixelType.INT8;
       case INT16:
+      case INT16_BE:
         return PixelType.INT16;
       case INT32:
+      case INT32_BE:
         return PixelType.INT32;
       case UINT8:
         return PixelType.UINT8;
       case UINT16:
+      case UINT16_BE:
         return PixelType.UINT16;
       case UINT32:
+      case UINT32_BE:
         return PixelType.UINT32;
       case FLOAT32:
+      case FLOAT32_BE:
         return PixelType.FLOAT;
       case FLOAT64:
+      case FLOAT64_BE:
         return PixelType.DOUBLE;
       default:
         throw new IllegalArgumentException("Unsupported pixel type: " + type);
