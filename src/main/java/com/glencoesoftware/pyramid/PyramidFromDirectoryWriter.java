@@ -881,18 +881,24 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
       case INT8:
         return PixelType.INT8;
       case INT16:
+      case INT16_BE:
         return PixelType.INT16;
       case INT32:
+      case INT32_BE:
         return PixelType.INT32;
       case UINT8:
         return PixelType.UINT8;
       case UINT16:
+      case UINT16_BE:
         return PixelType.UINT16;
       case UINT32:
+      case UINT32_BE:
         return PixelType.UINT32;
       case FLOAT32:
+      case FLOAT32_BE:
         return PixelType.FLOAT;
       case FLOAT64:
+      case FLOAT64_BE:
         return PixelType.DOUBLE;
       default:
         throw new IllegalArgumentException("Unsupported pixel type: " + type);
@@ -1289,10 +1295,20 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
       s.planeCount = s.z * s.t;
 
       // Zarr format allows both little and big endian order
-      s.littleEndian = !bigEndian;
-      if (bigEndian != metadata.getPixelsBigEndian(seriesIndex)) {
-        LOG.debug("Setting BigEndian={} for series {}", bigEndian, seriesIndex);
-        metadata.setPixelsBigEndian(bigEndian, seriesIndex);
+      // respect OME-XML for int8/uint8 data, but the Zarr metadata otherwise
+      // this prevents false mismatches for OME-XML that has the same
+      // BigEndian value for every Image, but a mix of int8/uint8 and other
+      // PixelTypes
+      if (type != PixelType.INT8 && type != PixelType.UINT8) {
+        s.littleEndian = !bigEndian;
+        if (bigEndian != metadata.getPixelsBigEndian(seriesIndex)) {
+          LOG.warn("Setting BigEndian={} for series {}",
+            bigEndian, seriesIndex);
+          metadata.setPixelsBigEndian(bigEndian, seriesIndex);
+        }
+      }
+      else {
+        s.littleEndian = !metadata.getPixelsBigEndian(seriesIndex);
       }
 
       // make sure pixel types are consistent between Zarr and OME metadata
@@ -1308,7 +1324,7 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
       if (seriesIndex > 0 && s.littleEndian != series.get(0).littleEndian) {
         // always warn on endian mismatches
         // mismatch is only fatal if pixel type is neither INT8 nor UINT8
-        String msg = String.format("Endian mismatch in series {} (expected {}",
+        String msg = String.format("Endian mismatch in series %d (expected %s)",
           seriesIndex, series.get(0).littleEndian);
         if (FormatTools.getBytesPerPixel(s.pixelType) > 1) {
           throw new FormatException(msg);
