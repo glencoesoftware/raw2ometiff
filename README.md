@@ -9,7 +9,7 @@ This is the second half of iSyntax/.mrxs => OME-TIFF conversion.
 Requirements
 ============
 
-Java 8 or later is required.
+As of 0.10.0, Java 11 or later is required.
 
 libblosc (https://github.com/Blosc/c-blosc) version 1.9.0 or later must be installed separately.
 The native libraries are not packaged with any relevant jars.  See also note in jzarr readme (https://github.com/bcdev/jzarr/blob/master/README.md)
@@ -26,6 +26,8 @@ Installation
 
 Development Installation
 ========================
+
+As of 0.10.0, Java 17 is required to build raw2ometiff.
 
 1. Clone the repository:
 
