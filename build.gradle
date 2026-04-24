@@ -37,11 +37,9 @@ dependencies {
     implementation 'net.java.dev.jna:jna:5.10.0'
     implementation 'dev.zarr:zarr-java:0.1.0'
     implementation 'info.picocli:picocli:4.7.5'
-    implementation 'me.tongfei:progressbar:0.9.0'
     implementation 'ome:formats-bsd:8.5.0'
-    implementation 'com.glencoesoftware:bioformats2raw:0.12.0-rc2'
-    implementation group: 'ch.qos.logback', name: 'logback-classic', version: '1.3.16'
-    implementation group: 'ch.qos.logback', name: 'logback-core', version: '1.3.16'
+    implementation 'com.glencoesoftware:bioformats2raw:0.12.0'
+    implementation group: 'ch.qos.logback', name: 'logback-classic', version: '1.5.32'
 
     testImplementation 'org.junit.jupiter:junit-jupiter-api:5.7.0'
     testRuntimeOnly 'org.junit.jupiter:junit-jupiter-engine:5.7.0'
