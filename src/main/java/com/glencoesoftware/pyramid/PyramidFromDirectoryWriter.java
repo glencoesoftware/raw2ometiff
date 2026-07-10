@@ -701,21 +701,21 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
       realHeight = region.height;
     }
 
-    int[] gridPosition = s.getArray(pos[2], pos[1], pos[0],
-      y * descriptor.tileSizeY, x * descriptor.tileSizeX);
-    int[] shape = s.getArray(1, 1, 1, realHeight, realWidth);
+    int[] gridPosition = descriptor.getArray(
+      no, y * descriptor.tileSizeY, x * descriptor.tileSizeX);
+    int[] shape = descriptor.getShapeArray(realHeight, realWidth);
 
-    return readTile(s, descriptor, pos, shape, gridPosition);
+    return readTile(s, descriptor, shape, gridPosition);
   }
 
   private byte[] readTile(PyramidSeries s, ResolutionDescriptor descriptor,
-    int[] pos, int[] shape, int[] gridPosition)
+    int[] shape, int[] gridPosition)
     throws FormatException, IOException
   {
     Array block = getZarrArray(descriptor.path);
     if (block == null) {
       throw new FormatException("Could not find block = " + descriptor.path +
-        ", position = [" + pos[0] + ", " + pos[1] + ", " + pos[2] + "]");
+        ", position = [" + Arrays.toString(gridPosition) + "]");
     }
     try {
       ucar.ma2.Array tile = block.read(
@@ -1269,7 +1269,9 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
       }
 
       // ...but if the channel count mismatches, metadata needs to be corrected
-      if (channelIndex >= 0) {
+      if (channelIndex >= 0 &&
+        service.getModuloAlongC(metadata, seriesIndex) == null)
+      {
         if (s.c > dims[channelIndex]) {
           LOG.debug("OME-XML has {} channels; using {} Zarr channels instead",
             s.c, dims[channelIndex]);

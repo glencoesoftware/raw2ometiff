@@ -306,7 +306,8 @@ public class ConversionTest {
           assertEquals(inputLength, outputLength);
           for (int px=0; px<inputLength; px++) {
             assertEquals(
-                Array.get(inputPlane, px), Array.get(outputPlane, px));
+                Array.get(inputPlane, px), Array.get(outputPlane, px),
+                "pixel " + px + ", plane " + plane + ", series " + series);
           }
         }
       }
