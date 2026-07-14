@@ -1,4 +1,4 @@
-[![Build status](https://github.com/glencoesoftware/raw2ometiff/workflows/Gradle/badge.svg))](https://github.com/glencoesoftware/raw2ometiff/actions)
+[![Build status](https://github.com/glencoesoftware/raw2ometiff/workflows/Gradle/badge.svg)](https://github.com/glencoesoftware/raw2ometiff/actions)
 
 raw2ometiff converter
 =====================
