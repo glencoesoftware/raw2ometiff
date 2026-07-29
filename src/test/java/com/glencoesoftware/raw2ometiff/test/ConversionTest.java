@@ -66,6 +66,7 @@ public class ConversionTest {
 
   private static final String V2_ARGUMENT = "0.4";
   private static final String V3_ARGUMENT = "0.5";
+  private static final String DEV_ARGUMENT = "1.0-DEV";
 
   Path input;
 
@@ -90,7 +91,8 @@ public class ConversionTest {
   static Stream<Arguments> getVersions() {
     return Stream.of(
       Arguments.of(V2_ARGUMENT),
-      Arguments.of(V3_ARGUMENT)
+      Arguments.of(V3_ARGUMENT),
+      Arguments.of(DEV_ARGUMENT)
     );
   }
 
@@ -111,7 +113,7 @@ public class ConversionTest {
     try {
       converter = new Converter();
       CommandLine.call(converter, args.toArray(new String[]{}));
-      if (args.contains(V3_ARGUMENT)) {
+      if (args.contains(V3_ARGUMENT) || args.contains(DEV_ARGUMENT)) {
         assertTrue(Files.exists(output.resolve("zarr.json")));
       }
       else {
@@ -299,7 +301,9 @@ public class ConversionTest {
         assertEquals(inputReader.getSizeC(), outputReader.getSizeC());
         for (int plane=0; plane<inputReader.getImageCount(); plane++) {
           Object inputPlane = getPlane(inputReader, plane);
-          Object outputPlane = getPlane(outputReader, plane);
+          int[] zct = inputReader.getZCTCoords(plane);
+          int outputPlaneIndex = outputReader.getIndex(zct[0], zct[1], zct[2]);
+          Object outputPlane = getPlane(outputReader, outputPlaneIndex);
 
           int inputLength = Array.getLength(inputPlane);
           int outputLength = Array.getLength(outputPlane);
@@ -346,7 +350,7 @@ public class ConversionTest {
       assertEquals("/", root.path("dimension_separator").asText());
       assertTrue(series0 instanceof dev.zarr.zarrjava.v2.Array);
     }
-    else if (version.equals(V3_ARGUMENT)) {
+    else if (version.equals(V3_ARGUMENT) || version.equals(DEV_ARGUMENT)) {
       assertTrue(output.resolve("0/0/c/0/0/0/0/0").toFile().exists());
 
       assertTrue(series0 instanceof dev.zarr.zarrjava.v3.Array);
@@ -412,7 +416,7 @@ public class ConversionTest {
     if (version.equals(V2_ARGUMENT)) {
       Files.delete(output.resolve("0").resolve(".zgroup"));
     }
-    else if (version.equals(V3_ARGUMENT)) {
+    else if (version.equals(V3_ARGUMENT) || version.equals(DEV_ARGUMENT)) {
       Files.delete(output.resolve("0").resolve("zarr.json"));
     }
     try {
@@ -1200,6 +1204,28 @@ public class ConversionTest {
   public void testCompact4D(String version) throws Exception {
     input = fake("sizeT", "4", "sizeZ", "2");
     assertBioFormats2Raw("--compact", "--ngff-version", version);
+    assertTool();
+    iteratePixels();
+  }
+
+  static Stream<Arguments> getModuloFiles() {
+    return Stream.of(
+      Arguments.of("mini-flim-moduloC.ome.tiff"),
+      Arguments.of("mini-flim-moduloT.ome.tiff"),
+      Arguments.of("mini-spim-moduloZ.ome.tiff")
+    );
+  }
+
+  /**
+   * Test conversion of input data with modulo dimensions.
+   *
+   * @param file relative name of modulo test file
+   */
+  @ParameterizedTest
+  @MethodSource("getModuloFiles")
+  public void testModuloSupport(String file) throws Exception {
+    input = Paths.get(this.getClass().getResource(file).toURI());
+    assertBioFormats2Raw("--ngff-version", DEV_ARGUMENT);
     assertTool();
     iteratePixels();
   }
