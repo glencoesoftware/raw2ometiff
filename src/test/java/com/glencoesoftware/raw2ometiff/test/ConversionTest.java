@@ -94,6 +94,21 @@ public class ConversionTest {
     );
   }
 
+  static Stream<Arguments> getPixelTypeVersions() {
+    return Stream.of(
+      Arguments.of(V2_ARGUMENT, "uint8"),
+      Arguments.of(V2_ARGUMENT, "uint16"),
+      Arguments.of(V2_ARGUMENT, "uint32"),
+      Arguments.of(V2_ARGUMENT, "float"),
+      Arguments.of(V2_ARGUMENT, "double"),
+      Arguments.of(V3_ARGUMENT, "uint8"),
+      Arguments.of(V3_ARGUMENT, "uint16"),
+      Arguments.of(V3_ARGUMENT, "uint32"),
+      Arguments.of(V3_ARGUMENT, "float"),
+      Arguments.of(V3_ARGUMENT, "double")
+    );
+  }
+
   /**
    * Run the bioformats2raw main method and check for success or failure.
    *
@@ -370,11 +385,12 @@ public class ConversionTest {
    * Test defaults.
    *
    * @param version version parameter for bioformats2raw
+   * @param pixelType pixel type for input data (e.g. "uint8")
    */
   @ParameterizedTest
-  @MethodSource("getVersions")
-  public void testDefaults(String version) throws Exception {
-    input = fake();
+  @MethodSource("getPixelTypeVersions")
+  public void testDefaults(String version, String pixelType) throws Exception {
+    input = fake("pixelType", pixelType);
     assertBioFormats2Raw("--ngff-version", version);
     assertTool();
     assertDefaults(version);
