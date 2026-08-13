@@ -11,6 +11,8 @@ import java.io.File;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
+import java.nio.DoubleBuffer;
+import java.nio.FloatBuffer;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -721,8 +723,23 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
       ucar.ma2.Array tile = block.read(
         Utils.toLongArray(gridPosition),
         Utils.toLongArray(shape));
-      ByteBuffer buf = tile.getDataAsByteBuffer(
-        s.littleEndian ? ByteOrder.LITTLE_ENDIAN : ByteOrder.BIG_ENDIAN);
+      ByteBuffer buf = null;
+      ByteOrder order =
+        s.littleEndian ? ByteOrder.LITTLE_ENDIAN : ByteOrder.BIG_ENDIAN;
+      if (tile instanceof ucar.ma2.ArrayFloat) {
+        buf = tile.getDataAsByteBuffer((int) (4 * tile.getSize()), order);
+        FloatBuffer fb = buf.asFloatBuffer();
+        fb.put((float[]) tile.get1DJavaArray(float.class));
+      }
+      else if (tile instanceof ucar.ma2.ArrayDouble) {
+        buf = tile.getDataAsByteBuffer((int) (8 * tile.getSize()), order);
+        DoubleBuffer db = buf.asDoubleBuffer();
+        db.put((double[]) tile.get1DJavaArray(double.class));
+      }
+      else {
+        buf = tile.getDataAsByteBuffer(order);
+      }
+
       byte[] bytes = new byte[buf.remaining()];
       buf.get(bytes);
       return bytes;
