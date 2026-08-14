@@ -1253,6 +1253,21 @@ public class ConversionTest {
   }
 
   /**
+   * Test conversion of input data with compact modulo dimensions.
+   *
+   * @param file relative name of modulo test file
+   */
+  @ParameterizedTest
+  @MethodSource("getModuloFiles")
+  public void testCompactModuloSupport(String file) throws Exception {
+    input = Paths.get(this.getClass().getResource(file).toURI());
+    assertBioFormats2Raw("--compact",
+      "--ngff-version", SupportedVersions.NGFF_DEV.toString());
+    assertTool();
+    iteratePixels();
+  }
+
+  /**
    * Test writing to an existing OME-TIFF file.
    */
   @Test
