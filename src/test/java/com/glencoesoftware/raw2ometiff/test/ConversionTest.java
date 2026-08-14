@@ -25,6 +25,7 @@ import java.util.stream.Stream;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.glencoesoftware.bioformats2raw.Converter;
+import com.glencoesoftware.bioformats2raw.SupportedVersions;
 import com.glencoesoftware.pyramid.CompressionType;
 import com.glencoesoftware.pyramid.PyramidFromDirectoryWriter;
 
@@ -64,10 +65,6 @@ import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 public class ConversionTest {
 
-  private static final String V2_ARGUMENT = "0.4";
-  private static final String V3_ARGUMENT = "0.5";
-  private static final String DEV_ARGUMENT = "1.0-DEV";
-
   Path input;
 
   Path output;
@@ -90,9 +87,9 @@ public class ConversionTest {
 
   static Stream<Arguments> getVersions() {
     return Stream.of(
-      Arguments.of(V2_ARGUMENT),
-      Arguments.of(V3_ARGUMENT),
-      Arguments.of(DEV_ARGUMENT)
+      Arguments.of(SupportedVersions.NGFF_04),
+      Arguments.of(SupportedVersions.NGFF_05),
+      Arguments.of(SupportedVersions.NGFF_DEV)
     );
   }
 
@@ -113,7 +110,9 @@ public class ConversionTest {
     try {
       converter = new Converter();
       CommandLine.call(converter, args.toArray(new String[]{}));
-      if (args.contains(V3_ARGUMENT) || args.contains(DEV_ARGUMENT)) {
+      if (args.contains(SupportedVersions.NGFF_05.toString()) ||
+        args.contains(SupportedVersions.NGFF_DEV.toString()))
+      {
         assertTrue(Files.exists(output.resolve("zarr.json")));
       }
       else {
@@ -334,12 +333,12 @@ public class ConversionTest {
         reader.isLittleEndian());
   }
 
-  private void assertDefaults(String version) throws Exception {
+  private void assertDefaults(SupportedVersions version) throws Exception {
     FilesystemStore store = new FilesystemStore(output);
     dev.zarr.zarrjava.core.Array series0 =
       dev.zarr.zarrjava.core.Array.open(store.resolve("0/0"));
 
-    if (version.equals(V2_ARGUMENT)) {
+    if (version.equals(SupportedVersions.NGFF_04)) {
       // check that the correct separator was used by checking
       // that the expected first chunk file exists
       assertTrue(output.resolve("0/0/0/0/0/0/0").toFile().exists());
@@ -350,7 +349,9 @@ public class ConversionTest {
       assertEquals("/", root.path("dimension_separator").asText());
       assertTrue(series0 instanceof dev.zarr.zarrjava.v2.Array);
     }
-    else if (version.equals(V3_ARGUMENT) || version.equals(DEV_ARGUMENT)) {
+    else if (version.equals(SupportedVersions.NGFF_05) ||
+      version.equals(SupportedVersions.NGFF_DEV))
+    {
       assertTrue(output.resolve("0/0/c/0/0/0/0/0").toFile().exists());
 
       assertTrue(series0 instanceof dev.zarr.zarrjava.v3.Array);
@@ -378,9 +379,9 @@ public class ConversionTest {
    */
   @ParameterizedTest
   @MethodSource("getVersions")
-  public void testDefaults(String version) throws Exception {
+  public void testDefaults(SupportedVersions version) throws Exception {
     input = fake();
-    assertBioFormats2Raw("--ngff-version", version);
+    assertBioFormats2Raw("--ngff-version", version.toString());
     assertTool();
     assertDefaults(version);
   }
@@ -392,10 +393,10 @@ public class ConversionTest {
    */
   @ParameterizedTest
   @MethodSource("getVersions")
-  public void testSymlinkAsRoot(String version) throws Exception {
+  public void testSymlinkAsRoot(SupportedVersions version) throws Exception {
     assumeTrue(SystemUtils.IS_OS_LINUX);
     input = fake();
-    assertBioFormats2Raw("--ngff-version", version);
+    assertBioFormats2Raw("--ngff-version", version.toString());
     Path notASymlink = output.resolveSibling(output.getFileName() + ".old");
     Files.move(output, notASymlink);
     Files.createSymbolicLink(output, notASymlink);
@@ -410,13 +411,15 @@ public class ConversionTest {
    */
   @ParameterizedTest
   @MethodSource("getVersions")
-  public void testSeriesCountCheck(String version) throws Exception {
+  public void testSeriesCountCheck(SupportedVersions version) throws Exception {
     input = fake();
-    assertBioFormats2Raw("--ngff-version", version);
-    if (version.equals(V2_ARGUMENT)) {
+    assertBioFormats2Raw("--ngff-version", version.toString());
+    if (version.equals(SupportedVersions.NGFF_04)) {
       Files.delete(output.resolve("0").resolve(".zgroup"));
     }
-    else if (version.equals(V3_ARGUMENT) || version.equals(DEV_ARGUMENT)) {
+    else if (version.equals(SupportedVersions.NGFF_05) ||
+      version.equals(SupportedVersions.NGFF_DEV))
+    {
       Files.delete(output.resolve("0").resolve("zarr.json"));
     }
     try {
@@ -436,9 +439,12 @@ public class ConversionTest {
    */
   @ParameterizedTest
   @MethodSource("getVersions")
-  public void testSouthEastEdgePadding(String version) throws Exception {
+  public void testSouthEastEdgePadding(SupportedVersions version)
+    throws Exception
+  {
     input = fake();
-    assertBioFormats2Raw("-w", "240", "-h", "240", "--ngff-version", version);
+    assertBioFormats2Raw("-w", "240", "-h", "240",
+      "--ngff-version", version.toString());
     assertTool("--compression", "raw");
     try (ImageReader reader = new ImageReader()) {
       reader.setFlattenedResolutions(false);
@@ -474,9 +480,12 @@ public class ConversionTest {
    */
   @ParameterizedTest
   @MethodSource("getVersions")
-  public void testEdgePaddingUint16(String version) throws Exception {
+  public void testEdgePaddingUint16(SupportedVersions version)
+    throws Exception
+  {
     input = fake("pixelType", "uint16");
-    assertBioFormats2Raw("-w", "240", "-h", "240", "--ngff-version", version);
+    assertBioFormats2Raw("-w", "240", "-h", "240",
+      "--ngff-version", version.toString());
     assertTool("--compression", "raw");
     try (ImageReader reader = new ImageReader()) {
       reader.setFlattenedResolutions(false);
@@ -515,9 +524,10 @@ public class ConversionTest {
    */
   @ParameterizedTest
   @MethodSource("getVersions")
-  public void testOddTileSize(String version) throws Exception {
+  public void testOddTileSize(SupportedVersions version) throws Exception {
     input = fake("pixelType", "uint16");
-    assertBioFormats2Raw("-w", "17", "-h", "19", "--ngff-version", version);
+    assertBioFormats2Raw("-w", "17", "-h", "19",
+      "--ngff-version", version.toString());
     assertTool("--compression", "raw");
     iteratePixels();
 
@@ -540,9 +550,10 @@ public class ConversionTest {
    */
   @ParameterizedTest
   @MethodSource("getVersions")
-  public void testOddImageSize(String version) throws Exception {
+  public void testOddImageSize(SupportedVersions version) throws Exception {
     input = fake("sizeX", "497", "sizeY", "498", "pixelType", "uint16");
-    assertBioFormats2Raw("-w", "128", "-h", "128", "--ngff-version", version);
+    assertBioFormats2Raw("-w", "128", "-h", "128",
+      "--ngff-version", version.toString());
     assertTool();
     iteratePixels();
   }
@@ -554,9 +565,9 @@ public class ConversionTest {
    */
   @ParameterizedTest
   @MethodSource("getVersions")
-  public void testRGBMultiT(String version) throws Exception {
+  public void testRGBMultiT(SupportedVersions version) throws Exception {
     input = fake("sizeC", "3", "sizeT", "5", "rgb", "3");
-    assertBioFormats2Raw("--ngff-version", version);
+    assertBioFormats2Raw("--ngff-version", version.toString());
     assertTool("--rgb");
     iteratePixels();
     try (ImageReader reader = new ImageReader()) {
@@ -582,9 +593,9 @@ public class ConversionTest {
    */
   @ParameterizedTest
   @MethodSource("getVersions")
-  public void testRGBMultiC(String version) throws Exception {
+  public void testRGBMultiC(SupportedVersions version) throws Exception {
     input = fake("sizeC", "12", "rgb", "3");
-    assertBioFormats2Raw("--ngff-version", version);
+    assertBioFormats2Raw("--ngff-version", version.toString());
     assertTool("--rgb");
     iteratePixels();
     try (ImageReader reader = new ImageReader()) {
@@ -612,7 +623,9 @@ public class ConversionTest {
    */
   @ParameterizedTest
   @MethodSource("getVersions")
-  public void testRGBChannelMetadata(String version) throws Exception {
+  public void testRGBChannelMetadata(SupportedVersions version)
+    throws Exception
+  {
     Map<String, String> options = new HashMap<String, String>();
     options.put("sizeC", "3");
     options.put("rgb", "3");
@@ -623,7 +636,7 @@ public class ConversionTest {
     series0.put("ChannelName_0", "FITC");
     series.put(0, series0);
     input = fake(options, series);
-    assertBioFormats2Raw("--ngff-version", version);
+    assertBioFormats2Raw("--ngff-version", version.toString());
     assertTool("--rgb");
     iteratePixels();
     try (ImageReader reader = new ImageReader()) {
@@ -648,9 +661,9 @@ public class ConversionTest {
    */
   @ParameterizedTest
   @MethodSource("getVersions")
-  public void testMetadata(String version) throws Exception {
+  public void testMetadata(SupportedVersions version) throws Exception {
     input = fake("physicalSizeX", "0.5", "physicalSizeY", "0.6");
-    assertBioFormats2Raw("--ngff-version", version);
+    assertBioFormats2Raw("--ngff-version", version.toString());
     assertTool();
 
     try (TiffParser parser = new TiffParser(outputOmeTiff.toString())) {
@@ -669,10 +682,10 @@ public class ConversionTest {
    */
   @ParameterizedTest
   @MethodSource("getVersions")
-  public void testPlate(String version) throws Exception {
+  public void testPlate(SupportedVersions version) throws Exception {
     input =
       fake("plateRows", "2", "plateCols", "3", "fields", "4", "sizeC", "3");
-    assertBioFormats2Raw("--ngff-version", version);
+    assertBioFormats2Raw("--ngff-version", version.toString());
     assertTool();
     iteratePixels();
     try (ImageReader reader = new ImageReader()) {
@@ -695,11 +708,11 @@ public class ConversionTest {
    */
   @ParameterizedTest
   @MethodSource("getVersions")
-  public void testSingleImageNoHCS(String version) throws Exception {
+  public void testSingleImageNoHCS(SupportedVersions version) throws Exception {
     input =
       fake("plateRows", "2", "plateCols", "3", "fields", "4", "sizeC", "3");
     assertBioFormats2Raw(
-      "--series", "0", "--no-hcs", "--ngff-version", version);
+      "--series", "0", "--no-hcs", "--ngff-version", version.toString());
     assertTool();
     try (ImageReader reader = new ImageReader()) {
       ServiceFactory sf = new ServiceFactory();
@@ -721,10 +734,10 @@ public class ConversionTest {
    */
   @ParameterizedTest
   @MethodSource("getVersions")
-  public void testSplitFiles(String version) throws Exception {
+  public void testSplitFiles(SupportedVersions version) throws Exception {
     input =
       fake("plateRows", "2", "plateCols", "3", "fields", "4", "sizeC", "3");
-    assertBioFormats2Raw("--ngff-version", version);
+    assertBioFormats2Raw("--ngff-version", version.toString());
     assertTool(24, 24, "--split");
 
     try (ImageReader reader = new ImageReader()) {
@@ -754,10 +767,10 @@ public class ConversionTest {
    */
   @ParameterizedTest
   @MethodSource("getVersions")
-  public void testSplitPlanes(String version) throws Exception {
+  public void testSplitPlanes(SupportedVersions version) throws Exception {
     input =
       fake("plateRows", "2", "plateCols", "3", "fields", "4", "sizeC", "3");
-    assertBioFormats2Raw("--ngff-version", version);
+    assertBioFormats2Raw("--ngff-version", version.toString());
     assertTool(24, 72, "--split-planes");
 
     try (ImageReader reader = new ImageReader()) {
@@ -788,10 +801,10 @@ public class ConversionTest {
    */
   @ParameterizedTest
   @MethodSource("getVersions")
-  public void testBothSplitOptions(String version) throws Exception {
+  public void testBothSplitOptions(SupportedVersions version) throws Exception {
     input =
       fake("plateRows", "2", "plateCols", "3", "fields", "4", "sizeC", "3");
-    assertBioFormats2Raw("--ngff-version", version);
+    assertBioFormats2Raw("--ngff-version", version.toString());
     // expect --split-planes to take precedence
     assertTool(24, 72, "--split", "--split-planes");
 
@@ -822,9 +835,9 @@ public class ConversionTest {
    */
   @ParameterizedTest
   @MethodSource("getVersions")
-  public void testOptionsAPI(String version) throws Exception {
+  public void testOptionsAPI(SupportedVersions version) throws Exception {
     input = fake("sizeC", "12", "rgb", "3");
-    assertBioFormats2Raw("--ngff-version", version);
+    assertBioFormats2Raw("--ngff-version", version.toString());
 
     outputOmeTiff = output.resolve("output.ome.tiff");
     PyramidFromDirectoryWriter apiConverter = new PyramidFromDirectoryWriter();
@@ -843,7 +856,7 @@ public class ConversionTest {
     // overwrite the same output OME-TIFF, but with different plane count
     input = fake("sizeT", "10");
     output = output.resolve("second-test");
-    assertBioFormats2Raw("--ngff-version", version);
+    assertBioFormats2Raw("--ngff-version", version.toString());
 
     apiConverter = new PyramidFromDirectoryWriter();
     cmd = new CommandLine(apiConverter);
@@ -864,9 +877,9 @@ public class ConversionTest {
    */
   @ParameterizedTest
   @MethodSource("getVersions")
-  public void testResetAPI(String version) throws Exception {
+  public void testResetAPI(SupportedVersions version) throws Exception {
     input = fake("sizeC", "12", "rgb", "3");
-    assertBioFormats2Raw("--ngff-version", version);
+    assertBioFormats2Raw("--ngff-version", version.toString());
 
     outputOmeTiff = output.resolve("output.ome.tiff");
 
@@ -922,9 +935,11 @@ public class ConversionTest {
    */
   @ParameterizedTest
   @MethodSource("getVersions")
-  public void testCompressionQuality(String version) throws Exception {
+  public void testCompressionQuality(SupportedVersions version)
+    throws Exception
+  {
     input = fake("sizeC", "3", "rgb", "3");
-    assertBioFormats2Raw("--ngff-version", version);
+    assertBioFormats2Raw("--ngff-version", version.toString());
     assertTool("--compression", "JPEG-2000", "--quality", "0.25", "--rgb");
 
     try (ImageReader reader = new ImageReader()) {
@@ -954,9 +969,9 @@ public class ConversionTest {
    */
   @ParameterizedTest
   @MethodSource("getVersions")
-  public void testLabelImage(String version) throws Exception {
+  public void testLabelImage(SupportedVersions version) throws Exception {
     input = fake("sizeX", "2000", "sizeY", "1500");
-    assertBioFormats2Raw("--ngff-version", version);
+    assertBioFormats2Raw("--ngff-version", version.toString());
     output = output.resolve("0");
     assertTool("-f", input.toString());
     iteratePixels();
@@ -971,9 +986,11 @@ public class ConversionTest {
    */
   @ParameterizedTest
   @MethodSource("getVersions")
-  public void testLabelImageWrongSize(String version) throws Exception {
+  public void testLabelImageWrongSize(SupportedVersions version)
+    throws Exception
+  {
     input = fake("sizeX", "2000", "sizeY", "1500");
-    assertBioFormats2Raw("--ngff-version", version);
+    assertBioFormats2Raw("--ngff-version", version.toString());
     output = output.resolve("0");
     try {
       assertTool("-f", "test.fake");
@@ -994,9 +1011,9 @@ public class ConversionTest {
    */
   @ParameterizedTest
   @MethodSource("getVersions")
-  public void testLabelImageWrongT(String version) throws Exception {
+  public void testLabelImageWrongT(SupportedVersions version) throws Exception {
     input = fake();
-    assertBioFormats2Raw("--ngff-version", version);
+    assertBioFormats2Raw("--ngff-version", version.toString());
     output = output.resolve("0");
     try {
       assertTool("-f", fake("sizeT", "5").toString());
@@ -1017,9 +1034,9 @@ public class ConversionTest {
    */
   @ParameterizedTest
   @MethodSource("getVersions")
-  public void testLabelImageWrongZ(String version) throws Exception {
+  public void testLabelImageWrongZ(SupportedVersions version) throws Exception {
     input = fake();
-    assertBioFormats2Raw("--ngff-version", version);
+    assertBioFormats2Raw("--ngff-version", version.toString());
     output = output.resolve("0");
     try {
       assertTool("-f", fake("sizeZ", "4").toString());
@@ -1039,11 +1056,11 @@ public class ConversionTest {
    */
   @ParameterizedTest
   @MethodSource("getVersions")
-  public void testLabelImageExtraMetadataChannels(String version)
+  public void testLabelImageExtraMetadataChannels(SupportedVersions version)
     throws Exception
   {
     input = fake("sizeX", "2000", "sizeY", "1500");
-    assertBioFormats2Raw("--ngff-version", version);
+    assertBioFormats2Raw("--ngff-version", version.toString());
     output = output.resolve("0");
 
     Path metadata = fake("sizeX", "2000", "sizeY", "1500", "sizeC", "3");
@@ -1060,11 +1077,11 @@ public class ConversionTest {
    */
   @ParameterizedTest
   @MethodSource("getVersions")
-  public void testLabelImageNotEnoughMetadataChannels(String version)
+  public void testLabelImageNotEnoughMetadataChannels(SupportedVersions version)
     throws Exception
   {
     input = fake("sizeX", "2000", "sizeY", "1500", "sizeC", "3");
-    assertBioFormats2Raw("--ngff-version", version);
+    assertBioFormats2Raw("--ngff-version", version.toString());
     output = output.resolve("0");
 
     Path metadata = fake("sizeX", "2000", "sizeY", "1500", "sizeC", "1");
@@ -1082,10 +1099,12 @@ public class ConversionTest {
    */
   @ParameterizedTest
   @MethodSource("getVersions")
-  public void testLabelImagePixelTypeMismatch(String version) throws Exception {
+  public void testLabelImagePixelTypeMismatch(SupportedVersions version)
+    throws Exception
+  {
     input = fake("sizeX", "2000", "sizeY", "1500",
       "pixelType", "uint16", "little", "true");
-    assertBioFormats2Raw("--ngff-version", version);
+    assertBioFormats2Raw("--ngff-version", version.toString());
     output = output.resolve("0");
 
     Path metadata = fake("sizeX", "2000", "sizeY", "1500",
@@ -1102,9 +1121,9 @@ public class ConversionTest {
    */
   @ParameterizedTest
   @MethodSource("getVersions")
-  public void testRGBLabelImage(String version) throws Exception {
+  public void testRGBLabelImage(SupportedVersions version) throws Exception {
     input = fake("sizeC", "3", "rgb", "3");
-    assertBioFormats2Raw("--ngff-version", version);
+    assertBioFormats2Raw("--ngff-version", version.toString());
     output = output.resolve("0");
     assertTool("--rgb", "-f", input.toString());
     iteratePixels();
@@ -1130,9 +1149,11 @@ public class ConversionTest {
    */
   @ParameterizedTest
   @MethodSource("getVersions")
-  public void testRGBLabelImageDifferentC(String version) throws Exception {
+  public void testRGBLabelImageDifferentC(SupportedVersions version)
+    throws Exception
+  {
     input = fake("sizeC", "3", "rgb", "3");
-    assertBioFormats2Raw("--ngff-version", version);
+    assertBioFormats2Raw("--ngff-version", version.toString());
     output = output.resolve("0");
     assertTool("--rgb", "-f", fake("sizeC", "4").toString());
     iteratePixels();
@@ -1158,9 +1179,9 @@ public class ConversionTest {
    */
   @ParameterizedTest
   @MethodSource("getVersions")
-  public void testCompact2D(String version) throws Exception {
+  public void testCompact2D(SupportedVersions version) throws Exception {
     input = fake();
-    assertBioFormats2Raw("--compact", "--ngff-version", version);
+    assertBioFormats2Raw("--compact", "--ngff-version", version.toString());
     assertTool();
     iteratePixels();
   }
@@ -1172,9 +1193,9 @@ public class ConversionTest {
    */
   @ParameterizedTest
   @MethodSource("getVersions")
-  public void testCompact3D(String version) throws Exception {
+  public void testCompact3D(SupportedVersions version) throws Exception {
     input = fake("sizeZ", "10");
-    assertBioFormats2Raw("--compact", "--ngff-version", version);
+    assertBioFormats2Raw("--compact", "--ngff-version", version.toString());
     assertTool();
     iteratePixels();
   }
@@ -1186,9 +1207,9 @@ public class ConversionTest {
    */
   @ParameterizedTest
   @MethodSource("getVersions")
-  public void testCompact3DRGB(String version) throws Exception {
+  public void testCompact3DRGB(SupportedVersions version) throws Exception {
     input = fake("sizeC", "3", "rgb", "3");
-    assertBioFormats2Raw("--compact", "--ngff-version", version);
+    assertBioFormats2Raw("--compact", "--ngff-version", version.toString());
     assertTool("--rgb");
     iteratePixels();
     checkRGBIFDs();
@@ -1201,9 +1222,9 @@ public class ConversionTest {
    */
   @ParameterizedTest
   @MethodSource("getVersions")
-  public void testCompact4D(String version) throws Exception {
+  public void testCompact4D(SupportedVersions version) throws Exception {
     input = fake("sizeT", "4", "sizeZ", "2");
-    assertBioFormats2Raw("--compact", "--ngff-version", version);
+    assertBioFormats2Raw("--compact", "--ngff-version", version.toString());
     assertTool();
     iteratePixels();
   }
@@ -1225,7 +1246,8 @@ public class ConversionTest {
   @MethodSource("getModuloFiles")
   public void testModuloSupport(String file) throws Exception {
     input = Paths.get(this.getClass().getResource(file).toURI());
-    assertBioFormats2Raw("--ngff-version", DEV_ARGUMENT);
+    assertBioFormats2Raw(
+      "--ngff-version", SupportedVersions.NGFF_DEV.toString());
     assertTool();
     iteratePixels();
   }
