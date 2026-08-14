@@ -13,6 +13,7 @@ import java.util.List;
 import java.util.Map;
 import loci.formats.FormatException;
 import loci.formats.FormatTools;
+import loci.formats.Modulo;
 import loci.formats.ome.OMEPyramidStore;
 import loci.formats.tiff.IFDList;
 import org.slf4j.Logger;
@@ -65,8 +66,12 @@ public class PyramidSeries {
    *
    * @param store store used to get dataset attributes
    * @param metadata additional OME-XML metadata
+   * @param moduloZ ModuloAlongZ
+   * @param moduloC ModuloAlongC
+   * @param moduloT ModuloAlongT
    */
-  public void describePyramid(FilesystemStore store, OMEPyramidStore metadata)
+  public void describePyramid(FilesystemStore store, OMEPyramidStore metadata,
+    Modulo moduloZ, Modulo moduloC, Modulo moduloT)
     throws FormatException, IOException
   {
     LOG.info("Number of resolution levels: {}", numberOfResolutions);
@@ -92,6 +97,9 @@ public class PyramidSeries {
     for (int resolution = 0; resolution < numberOfResolutions; resolution++) {
       ResolutionDescriptor descriptor = new ResolutionDescriptor();
       descriptor.path = String.valueOf(resolution);
+      descriptor.moduloZ = moduloZ;
+      descriptor.moduloC = moduloC;
+      descriptor.moduloT = moduloT;
       if (!path.isEmpty()) {
         descriptor.path = path + "/" + descriptor.path;
       }
@@ -183,37 +191,37 @@ public class PyramidSeries {
         }
       }
 
-      // quick way of preventing modulo axes from throwing mismatch exception
-      if (dimensionLengths.length < descriptor.axes.size() - 2) {
-        return;
-      }
+      Modulo mz = descriptor.moduloZ;
+      Modulo mc = descriptor.moduloC;
+      Modulo mt = descriptor.moduloT;
 
+      int[] total = new int[] {1, 1, 1};
+      for (int i=0; i<descriptor.axes.size(); i++) {
+        String axis = descriptor.axes.get(i);
+        int len = descriptor.axisLengths.get(i);
+        if (axis.equals("Z") ||
+          (mz != null && axis.equalsIgnoreCase(mz.type)))
+        {
+          total[0] *= len;
+        }
+        else if (axis.equals("C") ||
+          (mc != null && axis.equalsIgnoreCase(mc.type)))
+        {
+          total[1] *= len;
+        }
+        else if (axis.equals("T") ||
+          (mt != null && axis.equalsIgnoreCase(mt.type)))
+        {
+          total[2] *= len;
+        }
+      }
       for (int i=0; i<dimensionLengths.length; i++) {
         // dimensionLengths is in ZCT order, independent of dimensionOrder
-        // the two orders may be different if the --rgb flag was used
         String axis = "ZCT".substring(i, i + 1);
-        int axisIndex = descriptor.getIndex(axis);
-        LOG.debug("Checking axis {} with index {}, position {}",
-          axis, axisIndex, i);
-
-        if (axisIndex < 0 && dimensionLengths[i] > 1) {
-          throw new FormatException(axis + " axis expected but not defined");
-        }
-        else if (axisIndex >= 0 &&
-          dimensions[axisIndex] != dimensionLengths[i])
-        {
-          // a mismatch on C is usually OK (due to --rgb flag),
-          // but log it anyway
-          // a mismatch anywhere else is a problem
-          if (axis.equalsIgnoreCase("c")) {
-            LOG.debug("Mismatch on dimension {}; expected {} got {}",
-              axis, dimensions[axisIndex], dimensionLengths[i]);
-          }
-          else {
-            throw new FormatException(
-              "Mismatch on dimension " + axis + "; expected " +
-              dimensions[axisIndex] + ", got " + dimensionLengths[i]);
-          }
+        if (dimensionLengths[i] != total[i]) {
+          throw new FormatException(
+            "Mismatch on dimension " + axis + "; expected " +
+            total[i] + ", got " + dimensionLengths[i]);
         }
       }
     }

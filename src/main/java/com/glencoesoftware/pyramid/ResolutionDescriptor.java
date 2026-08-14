@@ -12,6 +12,7 @@ import java.util.List;
 import java.util.Map;
 
 import loci.formats.FormatTools;
+import loci.formats.Modulo;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -48,6 +49,10 @@ public class ResolutionDescriptor {
   /** Axes in the underlying array, in order. */
   ArrayList<String> axes = new ArrayList<String>();
   ArrayList<Integer> axisLengths = new ArrayList<Integer>();
+
+  Modulo moduloZ;
+  Modulo moduloC;
+  Modulo moduloT;
 
   /**
    * Add named axis to ordered list of axes in this resolution.

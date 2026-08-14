@@ -1367,7 +1367,11 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
       }
 
       s.planeCount *= effectiveChannels;
-      s.describePyramid(store, metadata);
+      s.describePyramid(store, metadata,
+        service.getModuloAlongZ(metadata, seriesIndex),
+        service.getModuloAlongC(metadata, seriesIndex),
+        service.getModuloAlongT(metadata, seriesIndex)
+      );
 
       metadata.setTiffDataIFD(new NonNegativeInteger(totalPlanes), s.index, 0);
 
