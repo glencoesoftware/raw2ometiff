@@ -1231,6 +1231,7 @@ public class ConversionTest {
 
   static Stream<Arguments> getModuloFiles() {
     return Stream.of(
+      Arguments.of("mini-moduloC.ome.tiff"),
       Arguments.of("mini-flim-moduloC.ome.tiff"),
       Arguments.of("mini-flim-moduloT.ome.tiff"),
       Arguments.of("mini-spim-moduloZ.ome.tiff")
