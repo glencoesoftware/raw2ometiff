@@ -96,13 +96,19 @@ public class ConversionTest {
 
   static Stream<Arguments> getPixelTypeVersions() {
     return Stream.of(
+      Arguments.of(V2_ARGUMENT, "int8"),
       Arguments.of(V2_ARGUMENT, "uint8"),
+      Arguments.of(V2_ARGUMENT, "int16"),
       Arguments.of(V2_ARGUMENT, "uint16"),
+      Arguments.of(V2_ARGUMENT, "int32"),
       Arguments.of(V2_ARGUMENT, "uint32"),
       Arguments.of(V2_ARGUMENT, "float"),
       Arguments.of(V2_ARGUMENT, "double"),
+      Arguments.of(V3_ARGUMENT, "int8"),
       Arguments.of(V3_ARGUMENT, "uint8"),
+      Arguments.of(V3_ARGUMENT, "int16"),
       Arguments.of(V3_ARGUMENT, "uint16"),
+      Arguments.of(V3_ARGUMENT, "int32"),
       Arguments.of(V3_ARGUMENT, "uint32"),
       Arguments.of(V3_ARGUMENT, "float"),
       Arguments.of(V3_ARGUMENT, "double")
