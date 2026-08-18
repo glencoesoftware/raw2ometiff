@@ -11,6 +11,8 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
+import com.glencoesoftware.bioformats2raw.Axis;
+
 import loci.formats.FormatTools;
 import loci.formats.Modulo;
 
@@ -47,8 +49,7 @@ public class ResolutionDescriptor {
   Integer numberOfTilesY;
 
   /** Axes in the underlying array, in order. */
-  ArrayList<String> axes = new ArrayList<String>();
-  ArrayList<Integer> axisLengths = new ArrayList<Integer>();
+  ArrayList<Axis> axes = new ArrayList<Axis>();
 
   Modulo moduloZ;
   Modulo moduloC;
@@ -59,11 +60,11 @@ public class ResolutionDescriptor {
    * Names are stored as upper-case only.
    *
    * @param axis name e.g. "x"
+   * @param axisType type e.g. "space"
    * @param len axis length
    */
-  public void addAxis(String axis, int len) {
-    axes.add(axis.toUpperCase());
-    axisLengths.add(len);
+  public void addAxis(String axis, String axisType, int len) {
+    axes.add(new Axis(axis.toUpperCase(), len, 0, axisType));
   }
 
   /**
@@ -73,7 +74,12 @@ public class ResolutionDescriptor {
    * @return index into list of axes
    */
   public int getIndex(String axis) {
-    return axes.indexOf(axis.toUpperCase());
+    for (int i=0; i<axes.size(); i++) {
+      if (axes.get(i).getType().equalsIgnoreCase(axis)) {
+        return i;
+      }
+    }
+    return -1;
   }
 
   /**
@@ -91,22 +97,22 @@ public class ResolutionDescriptor {
    */
   public int[] getArray(int no, int yi, int xi) {
     int[] returnArray = new int[axes.size()];
-    int[] lengths = new int[axisLengths.size() - 2];
+    int[] lengths = new int[axes.size() - 2];
     int xIndex = getIndex("X");
     int yIndex = getIndex("Y");
     int index = lengths.length - 1;
-    for (int i=0; i<axisLengths.size(); i++) {
+    for (int i=0; i<axes.size(); i++) {
       if (i == xIndex || i == yIndex) {
         continue;
       }
-      lengths[index] = axisLengths.get(i);
+      lengths[index] = axes.get(i).getLength();
       index--;
     }
     // this should be in roughly ZCT order
     int[] pos = FormatTools.rasterToPosition(lengths, no);
     int nextPos = pos.length - 1;
     for (int i=0; i<axes.size(); i++) {
-      char axis = axes.get(i).charAt(0);
+      char axis = axes.get(i).getType().charAt(0);
       switch (axis) {
         case 'X':
           returnArray[i] = xi;
@@ -134,7 +140,7 @@ public class ResolutionDescriptor {
   public int[] getShapeArray(int yi, int xi) {
     int[] returnArray = new int[axes.size()];
     for (int i=0; i<axes.size(); i++) {
-      char axis = axes.get(i).charAt(0);
+      char axis = axes.get(i).getType().charAt(0);
       switch (axis) {
         case 'X':
           returnArray[i] = xi;
@@ -160,15 +166,19 @@ public class ResolutionDescriptor {
 
     if (storedAxes != null) {
       for (int i=0; i<shape.length; i++) {
-        addAxis(storedAxes.get(i).get("name").toString(), shape[i]);
+        Map<String, Object> storedAxis =
+          (Map<String, Object>) storedAxes.get(i);
+        Object axisName = storedAxis.getOrDefault("name", "");
+        Object axisType = storedAxis.getOrDefault("type", "");
+        addAxis(axisName.toString(), axisType.toString(), shape[i]);
       }
     }
     else if (shape.length == 5) {
-      addAxis("T", shape[4]);
-      addAxis("C", shape[3]);
-      addAxis("Z", shape[2]);
-      addAxis("Y", shape[1]);
-      addAxis("X", shape[0]);
+      addAxis("T", "time", shape[4]);
+      addAxis("C", "channel", shape[3]);
+      addAxis("Z", "space", shape[2]);
+      addAxis("Y", "space", shape[1]);
+      addAxis("X", "space", shape[0]);
     }
     else {
       LOG.error("No stored 'axes' and array shape length {}", shape.length);

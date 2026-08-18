@@ -19,6 +19,8 @@ import loci.formats.tiff.IFDList;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import com.glencoesoftware.bioformats2raw.Axis;
+
 import dev.zarr.zarrjava.ZarrException;
 import dev.zarr.zarrjava.core.Array;
 import dev.zarr.zarrjava.core.Attributes;
@@ -197,20 +199,38 @@ public class PyramidSeries {
 
       int[] total = new int[] {1, 1, 1};
       for (int i=0; i<descriptor.axes.size(); i++) {
-        String axis = descriptor.axes.get(i);
-        int len = descriptor.axisLengths.get(i);
-        if (axis.equals("Z") ||
-          (mz != null && axis.equalsIgnoreCase(mz.type)))
+        Axis axis = descriptor.axes.get(i);
+        String axisName = axis.getType();
+        if (axisName.equalsIgnoreCase("X") || axisName.equalsIgnoreCase("Y")) {
+          continue;
+        }
+
+        // the "type" attribute of a Modulo may be "other", since this is parsed
+        // from an OME-XML annotation which enforces the enum documented in
+        // https://ome-model.readthedocs.io/en/latest/developers/
+        // this means the "type" attribute of the Modulo may not match the
+        // "name" attribute of the Zarr axis metadata
+        // instead assume that a modulo axis' Zarr metadata "type" is set to
+        // match the "type" of the parent axis, e.g. Zarr axis "C" and the Zarr
+        // axis representing ModuloAlongC will have Zarr axis "type"
+        // set to "channel"
+        String axisType = axis.getDimensionType();
+        int len = axis.getLength();
+        if (axisName.equals("Z") ||
+          (mz != null && axisType.equalsIgnoreCase("space") &&
+          mz.length() == len))
         {
           total[0] *= len;
         }
-        else if (axis.equals("C") ||
-          (mc != null && axis.equalsIgnoreCase(mc.type)))
+        else if (axisName.equals("C") ||
+          (mc != null && axisType.equalsIgnoreCase("channel") &&
+          mc.length() == len))
         {
           total[1] *= len;
         }
-        else if (axis.equals("T") ||
-          (mt != null && axis.equalsIgnoreCase(mt.type)))
+        else if (axisName.equals("T") ||
+          (mt != null && axisType.equalsIgnoreCase("time") &&
+          mt.length() == len))
         {
           total[2] *= len;
         }
