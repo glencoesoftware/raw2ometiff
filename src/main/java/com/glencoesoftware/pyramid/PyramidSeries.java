@@ -20,6 +20,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import com.glencoesoftware.bioformats2raw.Axis;
+import com.glencoesoftware.bioformats2raw.SupportedVersions;
 
 import dev.zarr.zarrjava.ZarrException;
 import dev.zarr.zarrjava.core.Array;
@@ -32,6 +33,8 @@ public class PyramidSeries {
 
   private static final Logger LOG =
     LoggerFactory.getLogger(PyramidSeries.class);
+
+  SupportedVersions version;
 
   /** Path to series. */
   String path;
@@ -109,7 +112,7 @@ public class PyramidSeries {
         Array array = Array.open(store.resolve(descriptor.path));
         int[] shape = Utils.toIntArray(array.metadata().shape);
         int[] chunk = array.metadata().chunkShape();
-        descriptor.parseMultiscales(multiscales, shape);
+        descriptor.parseMultiscales(multiscales, shape, version);
         setupResolution(descriptor, resolution, shape, chunk, metadata);
       }
       catch (ZarrException e) {

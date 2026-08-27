@@ -12,6 +12,7 @@ import java.util.List;
 import java.util.Map;
 
 import com.glencoesoftware.bioformats2raw.Axis;
+import com.glencoesoftware.bioformats2raw.SupportedVersions;
 
 import loci.formats.FormatTools;
 import loci.formats.Modulo;
@@ -156,12 +157,13 @@ public class ResolutionDescriptor {
   }
 
   protected void parseMultiscales(
-    List<Map<String, Object>> multiscales, int[] shape)
+    List<Map<String, Object>> multiscales, int[] shape,
+    SupportedVersions version)
   {
     Map<String, Object> multiscale = multiscales.get(0);
     List<Map<String, Object>> storedAxes = null;
-    if (multiscales != null) {
-      storedAxes = (List<Map<String, Object>>) multiscale.get("axes");
+    if (multiscale != null) {
+      storedAxes = ZarrUtils.getAxes(multiscale, version);
     }
 
     if (storedAxes != null) {

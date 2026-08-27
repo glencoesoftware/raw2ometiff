@@ -73,6 +73,7 @@ import org.perf4j.slf4j.Slf4JStopWatch;
 import com.glencoesoftware.bioformats2raw.IProgressListener;
 import com.glencoesoftware.bioformats2raw.NoOpProgressListener;
 import com.glencoesoftware.bioformats2raw.ProgressBarListener;
+import com.glencoesoftware.bioformats2raw.SupportedVersions;
 
 import picocli.CommandLine;
 import picocli.CommandLine.Option;
@@ -123,6 +124,8 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
 
   private static final Logger LOG =
     LoggerFactory.getLogger(PyramidFromDirectoryWriter.class);
+
+  private SupportedVersions omeZarrVersion;
 
   /** Path to each output file. */
   private List<Path> seriesPaths;
@@ -1081,6 +1084,12 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
     else if (layoutVersion != 3) {
       throw new FormatException("Unsupported version: " + layoutVersion);
     }
+    String version = (String) attributes.get("version");
+    // 0.5 and later write the version string here
+    // 0.4 writes the version string in multiscales (see below)
+    if (version != null) {
+      omeZarrVersion = ZarrUtils.getOMEZarrVersion(version);
+    }
 
     plateData = (Map<String, Object>) attributes.get("plate");
 
@@ -1254,7 +1263,12 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
       int channelIndex = -1;
       if (imgMultiscales != null) {
         Map<String, Object> multiscale = imgMultiscales.get(0);
-        imgAxes = (List<Map<String, Object>>) multiscale.get("axes");
+        // 0.4 stores version string under "multiscales"
+        if (omeZarrVersion == null) {
+          omeZarrVersion = ZarrUtils.getOMEZarrVersion(
+            (String) multiscale.get("version"));
+        }
+        imgAxes = ZarrUtils.getAxes(multiscale, omeZarrVersion);
         if (imgAxes != null) {
           for (int a=0; a<imgAxes.size(); a++) {
             if (imgAxes.get(a).get("name").toString().equalsIgnoreCase("c")) {
@@ -1366,6 +1380,7 @@ public class PyramidFromDirectoryWriter implements Callable<Void> {
           "Ignoring --rgb flag; channel count {} is not a multiple of 3", s.c);
       }
 
+      s.version = omeZarrVersion;
       s.planeCount *= effectiveChannels;
       s.describePyramid(store, metadata,
         service.getModuloAlongZ(metadata, seriesIndex),
