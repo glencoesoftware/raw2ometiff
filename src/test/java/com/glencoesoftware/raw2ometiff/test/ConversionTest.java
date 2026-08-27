@@ -93,6 +93,27 @@ public class ConversionTest {
     );
   }
 
+  static Stream<Arguments> getPixelTypeVersions() {
+    return Stream.of(
+      Arguments.of(SupportedVersions.NGFF_04, "int8"),
+      Arguments.of(SupportedVersions.NGFF_04, "uint8"),
+      Arguments.of(SupportedVersions.NGFF_04, "int16"),
+      Arguments.of(SupportedVersions.NGFF_04, "uint16"),
+      Arguments.of(SupportedVersions.NGFF_04, "int32"),
+      Arguments.of(SupportedVersions.NGFF_04, "uint32"),
+      Arguments.of(SupportedVersions.NGFF_04, "float"),
+      Arguments.of(SupportedVersions.NGFF_04, "double"),
+      Arguments.of(SupportedVersions.NGFF_05, "int8"),
+      Arguments.of(SupportedVersions.NGFF_05, "uint8"),
+      Arguments.of(SupportedVersions.NGFF_05, "int16"),
+      Arguments.of(SupportedVersions.NGFF_05, "uint16"),
+      Arguments.of(SupportedVersions.NGFF_05, "int32"),
+      Arguments.of(SupportedVersions.NGFF_05, "uint32"),
+      Arguments.of(SupportedVersions.NGFF_05, "float"),
+      Arguments.of(SupportedVersions.NGFF_05, "double")
+    );
+  }
+
   /**
    * Run the bioformats2raw main method and check for success or failure.
    *
@@ -376,11 +397,14 @@ public class ConversionTest {
    * Test defaults.
    *
    * @param version version parameter for bioformats2raw
+   * @param pixelType pixel type for input data (e.g. "uint8")
    */
   @ParameterizedTest
-  @MethodSource("getVersions")
-  public void testDefaults(SupportedVersions version) throws Exception {
-    input = fake();
+  @MethodSource("getPixelTypeVersions")
+  public void testDefaults(SupportedVersions version, String pixelType)
+    throws Exception
+  {
+    input = fake("pixelType", pixelType);
     assertBioFormats2Raw("--ngff-version", version.toString());
     assertTool();
     assertDefaults(version);

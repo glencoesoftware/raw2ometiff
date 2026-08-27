@@ -11,12 +11,6 @@ Requirements
 
 As of 0.10.0, Java 11 or later is required.
 
-libblosc (https://github.com/Blosc/c-blosc) version 1.9.0 or later must be installed separately.
-The native libraries are not packaged with any relevant jars.  See also note in jzarr readme (https://github.com/bcdev/jzarr/blob/master/README.md)
-
- * Mac OSX: `brew install c-blosc`
- * Ubuntu 18.04+: `apt-get install libblosc1`
-
 Installation
 ============
 
