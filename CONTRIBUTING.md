@@ -1,5 +1,5 @@
 Glencoe Software accepts Pull Requests on this repository on a case-by-case basis.
-All proposed contributions are subject to the current license on this repository (see `LICENSE.txt`).
+All proposed contributions are subject to the current license on this repository (see [LICENSE.txt](LICENSE.txt)).
 The Glencoe team reserves the right to close Pull Requests for any reason, with or without prior review.
 In most cases, we recommend opening an Issue first to document specific problems that need to be addressed. The same terms apply to Issues.
 
