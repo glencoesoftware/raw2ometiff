@@ -38,8 +38,8 @@ dependencies {
     implementation 'net.java.dev.jna:jna:5.10.0'
     implementation 'dev.zarr:zarr-java:0.1.0'
     implementation 'info.picocli:picocli:4.7.5'
-    implementation 'ome:formats-bsd:8.5.0'
-    implementation 'com.glencoesoftware:bioformats2raw:0.13.0-SNAPSHOT'
+    implementation 'ome:formats-bsd:9.0.0-rc1'
+    implementation 'com.glencoesoftware:bioformats2raw:0.13.0-rc1'
     implementation group: 'ch.qos.logback', name: 'logback-classic', version: '1.5.32'
 
     testImplementation 'org.junit.jupiter:junit-jupiter-api:5.7.0'
