@@ -13,10 +13,14 @@ import java.util.List;
 import java.util.Map;
 import loci.formats.FormatException;
 import loci.formats.FormatTools;
+import loci.formats.Modulo;
 import loci.formats.ome.OMEPyramidStore;
 import loci.formats.tiff.IFDList;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+
+import com.glencoesoftware.bioformats2raw.Axis;
+import com.glencoesoftware.bioformats2raw.SupportedVersions;
 
 import dev.zarr.zarrjava.ZarrException;
 import dev.zarr.zarrjava.core.Array;
@@ -29,6 +33,8 @@ public class PyramidSeries {
 
   private static final Logger LOG =
     LoggerFactory.getLogger(PyramidSeries.class);
+
+  SupportedVersions version;
 
   /** Path to series. */
   String path;
@@ -59,79 +65,18 @@ public class PyramidSeries {
   /** Description of each resolution in the pyramid. */
   List<ResolutionDescriptor> resolutions;
 
-  /** Axes in the underlying array, in order. */
-  ArrayList<String> axes = new ArrayList<String>();
-
-  /**
-   * Add named axis to ordered list of axes in this resolution.
-   * Names are stored as upper-case only.
-   *
-   * @param axis name e.g. "x"
-   */
-  public void addAxis(String axis) {
-    axes.add(axis.toUpperCase());
-  }
-
-  /**
-   * Find the index in the ordered list of the named axis.
-   *
-   * @param axis name e.g. "x"
-   * @return index into list of axes
-   */
-  public int getIndex(String axis) {
-    return axes.indexOf(axis.toUpperCase());
-  }
-
-  /**
-   * Create an indexing array (e.g. shape or offset) for this resolution,
-   * which represents the given 5D values.
-   * Since the resolution's underlying array may have less than 5 dimensions,
-   * this is mapping from the 5D space of the OME data model to the
-   * ND space of this resolution's array.
-   *
-   * @param ti T index
-   * @param ci C index
-   * @param zi Z index
-   * @param yi Y index
-   * @param xi X index
-   * @return array representing the given indexes, in this resolution's
-   * dimensional space
-   */
-  public int[] getArray(int ti, int ci, int zi, int yi, int xi) {
-    int[] returnArray = new int[axes.size()];
-    for (int i=0; i<axes.size(); i++) {
-      char axis = axes.get(i).charAt(0);
-      switch (axis) {
-        case 'X':
-          returnArray[i] = xi;
-          break;
-        case 'Y':
-          returnArray[i] = yi;
-          break;
-        case 'Z':
-          returnArray[i] = zi;
-          break;
-        case 'C':
-          returnArray[i] = ci;
-          break;
-        case 'T':
-          returnArray[i] = ti;
-          break;
-        default:
-          throw new IllegalArgumentException("Unexpected axis: " + axis);
-      }
-    }
-    return returnArray;
-  }
-
  /**
    * Calculate image width and height for each resolution.
    * Uses the first tile in the resolution to find the tile size.
    *
    * @param store store used to get dataset attributes
    * @param metadata additional OME-XML metadata
+   * @param moduloZ ModuloAlongZ
+   * @param moduloC ModuloAlongC
+   * @param moduloT ModuloAlongT
    */
-  public void describePyramid(FilesystemStore store, OMEPyramidStore metadata)
+  public void describePyramid(FilesystemStore store, OMEPyramidStore metadata,
+    Modulo moduloZ, Modulo moduloC, Modulo moduloT)
     throws FormatException, IOException
   {
     LOG.info("Number of resolution levels: {}", numberOfResolutions);
@@ -153,12 +98,13 @@ public class PyramidSeries {
       throw new FormatException(e);
     }
 
-    parseMultiscales(multiscales);
-
     resolutions = new ArrayList<ResolutionDescriptor>();
     for (int resolution = 0; resolution < numberOfResolutions; resolution++) {
       ResolutionDescriptor descriptor = new ResolutionDescriptor();
       descriptor.path = String.valueOf(resolution);
+      descriptor.moduloZ = moduloZ;
+      descriptor.moduloC = moduloC;
+      descriptor.moduloT = moduloT;
       if (!path.isEmpty()) {
         descriptor.path = path + "/" + descriptor.path;
       }
@@ -166,6 +112,7 @@ public class PyramidSeries {
         Array array = Array.open(store.resolve(descriptor.path));
         int[] shape = Utils.toIntArray(array.metadata().shape);
         int[] chunk = array.metadata().chunkShape();
+        descriptor.parseMultiscales(multiscales, shape, version);
         setupResolution(descriptor, resolution, shape, chunk, metadata);
       }
       catch (ZarrException e) {
@@ -205,8 +152,8 @@ public class PyramidSeries {
   {
     descriptor.resolutionNumber = resolution;
 
-    int xIndex = getIndex("X");
-    int yIndex = getIndex("Y");
+    int xIndex = descriptor.getIndex("X");
+    int yIndex = descriptor.getIndex("Y");
 
     descriptor.sizeX = dimensions[xIndex];
     descriptor.sizeY = dimensions[yIndex];
@@ -249,57 +196,58 @@ public class PyramidSeries {
         }
       }
 
+      Modulo mz = descriptor.moduloZ;
+      Modulo mc = descriptor.moduloC;
+      Modulo mt = descriptor.moduloT;
+
+      int[] total = new int[] {1, 1, 1};
+      for (int i=0; i<descriptor.axes.size(); i++) {
+        Axis axis = descriptor.axes.get(i);
+        String axisName = axis.getType();
+        if (axisName.equalsIgnoreCase("X") || axisName.equalsIgnoreCase("Y")) {
+          continue;
+        }
+
+        // the "type" attribute of a Modulo may be "other", since this is parsed
+        // from an OME-XML annotation which enforces the enum documented in
+        // https://ome-model.readthedocs.io/en/latest/developers/
+        // this means the "type" attribute of the Modulo may not match the
+        // "name" attribute of the Zarr axis metadata
+        // instead assume that a modulo axis' Zarr metadata "type" is set to
+        // match the "type" of the parent axis, e.g. Zarr axis "C" and the Zarr
+        // axis representing ModuloAlongC will have Zarr axis "type"
+        // set to "channel"
+        String axisType = axis.getDimensionType();
+        int len = axis.getLength();
+        if (axisName.equals("Z") ||
+          (mz != null && axisType.equalsIgnoreCase("space") &&
+          mz.length() == len))
+        {
+          total[0] *= len;
+        }
+        else if (axisName.equals("C") ||
+          (mc != null && axisType.equalsIgnoreCase("channel") &&
+          mc.length() == len))
+        {
+          total[1] *= len;
+        }
+        else if (axisName.equals("T") ||
+          (mt != null && axisType.equalsIgnoreCase("time") &&
+          mt.length() == len))
+        {
+          total[2] *= len;
+        }
+      }
       for (int i=0; i<dimensionLengths.length; i++) {
         // dimensionLengths is in ZCT order, independent of dimensionOrder
-        // the two orders may be different if the --rgb flag was used
         String axis = "ZCT".substring(i, i + 1);
-        int axisIndex = getIndex(axis);
-        LOG.debug("Checking axis {} with index {}, position {}",
-          axis, axisIndex, i);
-
-        if (axisIndex < 0 && dimensionLengths[i] > 1) {
-          throw new FormatException(axis + " axis expected but not defined");
-        }
-        else if (axisIndex >= 0 &&
-          dimensions[axisIndex] != dimensionLengths[i])
-        {
-          // a mismatch on C is usually OK (due to --rgb flag),
-          // but log it anyway
-          // a mismatch anywhere else is a problem
-          if (axis.equalsIgnoreCase("c")) {
-            LOG.debug("Mismatch on dimension {}; expected {} got {}",
-              axis, dimensions[axisIndex], dimensionLengths[i]);
-          }
-          else {
-            throw new FormatException(
-              "Mismatch on dimension " + axis + "; expected " +
-              dimensions[axisIndex] + ", got " + dimensionLengths[i]);
-          }
+        if (dimensionLengths[i] != total[i]) {
+          throw new FormatException(
+            "Mismatch on dimension " + axis + "; expected " +
+            total[i] + ", got " + dimensionLengths[i]);
         }
       }
     }
   }
-
-  private void parseMultiscales(List<Map<String, Object>> multiscales) {
-    Map<String, Object> multiscale = multiscales.get(0);
-    List<Map<String, Object>> storedAxes = null;
-    if (multiscales != null) {
-      storedAxes = (List<Map<String, Object>>) multiscale.get("axes");
-    }
-
-    if (storedAxes != null) {
-      for (Map<String, Object> axis : storedAxes) {
-        addAxis(axis.get("name").toString());
-      }
-    }
-    else {
-      addAxis("T");
-      addAxis("C");
-      addAxis("Z");
-      addAxis("Y");
-      addAxis("X");
-    }
-  }
-
 
 }

@@ -7,7 +7,24 @@
  */
 package com.glencoesoftware.pyramid;
 
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
+
+import com.glencoesoftware.bioformats2raw.Axis;
+import com.glencoesoftware.bioformats2raw.SupportedVersions;
+
+import loci.formats.FormatTools;
+import loci.formats.Modulo;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 public class ResolutionDescriptor {
+
+  private static final Logger LOG =
+    LoggerFactory.getLogger(ResolutionDescriptor.class);
+
   /** Path to resolution. */
   String path;
 
@@ -31,5 +48,143 @@ public class ResolutionDescriptor {
 
   /** Number of tiles along Y axis. */
   Integer numberOfTilesY;
+
+  /** Axes in the underlying array, in order. */
+  ArrayList<Axis> axes = new ArrayList<Axis>();
+
+  Modulo moduloZ;
+  Modulo moduloC;
+  Modulo moduloT;
+
+  /**
+   * Add named axis to ordered list of axes in this resolution.
+   * Names are stored as upper-case only.
+   *
+   * @param axis name e.g. "x"
+   * @param axisType type e.g. "space"
+   * @param len axis length
+   */
+  public void addAxis(String axis, String axisType, int len) {
+    axes.add(new Axis(axis.toUpperCase(), len, 0, axisType));
+  }
+
+  /**
+   * Find the index in the ordered list of the named axis.
+   *
+   * @param axis name e.g. "x"
+   * @return index into list of axes
+   */
+  public int getIndex(String axis) {
+    for (int i=0; i<axes.size(); i++) {
+      if (axes.get(i).getType().equalsIgnoreCase(axis)) {
+        return i;
+      }
+    }
+    return -1;
+  }
+
+  /**
+   * Create an indexing array (e.g. shape or offset) for this resolution,
+   * which represents the given 5D values.
+   * Since the resolution's underlying array may have less than 5 dimensions,
+   * this is mapping from the 5D space of the OME data model to the
+   * ND space of this resolution's array.
+   *
+   * @param no plane index
+   * @param yi Y index
+   * @param xi X index
+   * @return array representing the given indexes, in this resolution's
+   * dimensional space
+   */
+  public int[] getArray(int no, int yi, int xi) {
+    int[] returnArray = new int[axes.size()];
+    int[] lengths = new int[axes.size() - 2];
+    int xIndex = getIndex("X");
+    int yIndex = getIndex("Y");
+    int index = lengths.length - 1;
+    for (int i=0; i<axes.size(); i++) {
+      if (i == xIndex || i == yIndex) {
+        continue;
+      }
+      lengths[index] = axes.get(i).getLength();
+      index--;
+    }
+    // this should be in roughly ZCT order
+    int[] pos = FormatTools.rasterToPosition(lengths, no);
+    int nextPos = pos.length - 1;
+    for (int i=0; i<axes.size(); i++) {
+      char axis = axes.get(i).getType().charAt(0);
+      switch (axis) {
+        case 'X':
+          returnArray[i] = xi;
+          break;
+        case 'Y':
+          returnArray[i] = yi;
+          break;
+        default:
+          returnArray[i] = pos[nextPos];
+          nextPos--;
+      }
+    }
+    return returnArray;
+  }
+
+  /**
+   * Get an appropriately-sized shape array for the given XY.
+   * All axes other than X and Y will be 1.
+   *
+   * @param yi Y shape
+   * @param xi X shape
+   *
+   * @return shape array
+   */
+  public int[] getShapeArray(int yi, int xi) {
+    int[] returnArray = new int[axes.size()];
+    for (int i=0; i<axes.size(); i++) {
+      char axis = axes.get(i).getType().charAt(0);
+      switch (axis) {
+        case 'X':
+          returnArray[i] = xi;
+          break;
+        case 'Y':
+          returnArray[i] = yi;
+          break;
+        default:
+          returnArray[i] = 1;
+      }
+    }
+    return returnArray;
+  }
+
+  protected void parseMultiscales(
+    List<Map<String, Object>> multiscales, int[] shape,
+    SupportedVersions version)
+  {
+    Map<String, Object> multiscale = multiscales.get(0);
+    List<Map<String, Object>> storedAxes = null;
+    if (multiscale != null) {
+      storedAxes = ZarrUtils.getAxes(multiscale, version);
+    }
+
+    if (storedAxes != null) {
+      for (int i=0; i<shape.length; i++) {
+        Map<String, Object> storedAxis =
+          (Map<String, Object>) storedAxes.get(i);
+        Object axisName = storedAxis.getOrDefault("name", "");
+        Object axisType = storedAxis.getOrDefault("type", "");
+        addAxis(axisName.toString(), axisType.toString(), shape[i]);
+      }
+    }
+    else if (shape.length == 5) {
+      addAxis("T", "time", shape[4]);
+      addAxis("C", "channel", shape[3]);
+      addAxis("Z", "space", shape[2]);
+      addAxis("Y", "space", shape[1]);
+      addAxis("X", "space", shape[0]);
+    }
+    else {
+      LOG.error("No stored 'axes' and array shape length {}", shape.length);
+    }
+  }
 
 }
